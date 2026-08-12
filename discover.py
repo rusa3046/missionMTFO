@@ -72,6 +72,12 @@ class NetStats:
 
 NET = NetStats()
 
+# Workday instance labels. A tenant lives on exactly one of these, and the label
+# is not derivable from the company — capitalone is wd1 or wd12 depending on when
+# they were provisioned. Guessing wrong makes every site probe fail, which is why
+# --fix-config found nothing for nine Workday tenants before this existed.
+WORKDAY_INSTANCES = ["wd1", "wd2", "wd3", "wd5", "wd10", "wd12", "wd101", "wd103"]
+
 # Site-path segments that Workday tenants overwhelmingly use, most common first.
 WORKDAY_SITES = [
     "External", "external", "EXTERNAL_CAREERS", "External_Career_Site",
@@ -306,6 +312,39 @@ def apply_edits(text, edits):
     return text
 
 
+def validate_config(text, before):
+    """
+    Structural check on repaired config text. Returns a problem string, or None.
+
+    Runs before anything is written. Relying on a downstream CI workflow to catch
+    a broken config does not work here: pushes made with the default GITHUB_TOKEN
+    never trigger workflows, so the validation has to happen in this process.
+    """
+    try:
+        after = json.loads(text)
+    except ValueError as e:
+        return "result is not valid JSON: %s" % e
+
+    old_names = [e["company"] for e in before["companies"]]
+    new_names = [e["company"] for e in after.get("companies", [])]
+    if new_names != old_names:
+        return ("company list changed (%d -> %d entries)"
+                % (len(old_names), len(new_names)))
+    if after.get("filters") != before.get("filters"):
+        return "filters block was modified"
+
+    for entry in after["companies"]:
+        if entry.get("disabled"):
+            continue
+        if entry["ats"] == "workday":
+            missing = [k for k in ("host", "tenant", "site") if not entry.get(k)]
+            if missing:
+                return "%s is missing %s" % (entry["company"], ", ".join(missing))
+        elif not entry.get("token"):
+            return "%s has no token" % entry["company"]
+    return None
+
+
 def _entry_works(entry):
     """True/False if we got an answer, None if we never reached the endpoint."""
     try:
@@ -325,11 +364,58 @@ def _entry_works(entry):
         return False
 
 
+def workday_host_candidates(host, tenant):
+    """The configured host first, then every plausible instance for this tenant."""
+    cands = [host] if host else []
+    for inst in WORKDAY_INSTANCES:
+        cands.append("%s.%s.myworkdayjobs.com" % (tenant, inst))
+    return list(dict.fromkeys(c for c in cands if c))
+
+
+def discover_workday_host(host, tenant):
+    """
+    Find which instance actually hosts this tenant, using one cheap probe each.
+
+    The status code is the whole signal, so read it carefully:
+        200  this host AND this site are correct — done
+        422  tenant exists here, site segment is wrong — enumerate sites next
+        401  tenant exists but the board is private — no amount of guessing helps
+        404  wrong tenant for this host — try the next instance
+        (unreachable)  host does not exist — try the next instance
+
+    Returns (host, site_or_None, status) where status is "ok", "site-unknown",
+    "auth", or "none".
+    """
+    for candidate in workday_host_candidates(host, tenant):
+        url = "https://%s/wday/cxs/%s/External/jobs" % (candidate, tenant)
+        body = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": ""}
+        try:
+            payload = probe(url, method="POST", body=body)
+            if payload.get("jobPostings"):
+                print("  HOST  %s (site 'External' works)" % candidate)
+                return candidate, "External", "ok"
+            print("  host  %s reachable but 'External' is empty" % candidate)
+            return candidate, None, "site-unknown"
+        except urllib.error.HTTPError as e:
+            if e.code == 422:
+                print("  HOST  %s (tenant exists, site segment wrong)" % candidate)
+                return candidate, None, "site-unknown"
+            if e.code == 401:
+                print("  AUTH  %s requires authentication — not publicly pollable"
+                      % candidate)
+                return candidate, None, "auth"
+            # 404 and friends: wrong tenant for this instance.
+        except ProbeError:
+            pass                      # instance does not exist; that is expected
+        time.sleep(DELAY)
+    return None, None, "none"
+
+
 def cmd_fix_config(dry_run=False, allow_ats_switch=False):
     """Walk companies.json, retry every entry, and repair what resolves."""
     original = CONFIG_PATH.read_text()
     cfg = json.loads(original)
-    edits, unresolved, suggestions, inconclusive = [], [], [], []
+    edits, unresolved, suggestions, inconclusive, private = [], [], [], [], []
 
     for entry in cfg["companies"]:
         if entry.get("disabled"):
@@ -347,12 +433,28 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         print("\n=== %s (%s) ===" % (name, ats))
 
         if ats == "workday":
-            hits = discover_workday(entry["host"], entry["tenant"])
-            if hits:
-                edits.append((name, {"site": hits[0]["site"], "verified": True}))
-                print("  FIX   site -> %r" % hits[0]["site"])
-            else:
+            host, site, status = discover_workday_host(entry.get("host"), entry["tenant"])
+            if status == "auth":
+                private.append(name)
+                continue
+            if status == "none":
                 unresolved.append(name)
+                continue
+
+            if site is None:
+                hits = discover_workday(host, entry["tenant"])
+                site = hits[0]["site"] if hits else None
+            if site is None:
+                unresolved.append(name)
+                continue
+
+            fields = {"site": site, "verified": True}
+            if host != entry.get("host"):
+                fields["host"] = host
+                print("  FIX   host -> %r, site -> %r" % (host, site))
+            else:
+                print("  FIX   site -> %r" % site)
+            edits.append((name, fields))
             continue
 
         # Same-ATS repair first: this only ever rewrites `token`.
@@ -394,10 +496,19 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         return 2
 
     if edits and not dry_run:
+        repaired = apply_edits(original, edits)
+        problem = validate_config(repaired, cfg)
+        if problem:
+            print("\n" + "=" * 70)
+            print("REFUSED TO WRITE — the repaired config failed validation:")
+            print("  %s" % problem)
+            print("companies.json is unchanged.")
+            print("=" * 70)
+            return 3
         CONFIG_PATH.with_suffix(".json.bak").write_text(original)
-        CONFIG_PATH.write_text(apply_edits(original, edits))
-        print("\nWrote %d repair(s) to companies.json (backup: companies.json.bak)"
-              % len(edits))
+        CONFIG_PATH.write_text(repaired)
+        print("\nWrote %d repair(s) to companies.json, validated "
+              "(backup: companies.json.bak)" % len(edits))
     elif edits:
         print("\n--dry-run: %d repair(s) NOT written:" % len(edits))
     else:
@@ -412,6 +523,14 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         for name, was, best in suggestions:
             print("  %-22s %s -> %s/%s (%d postings)"
                   % (name, was, best["ats"], best["token"], best["count"]))
+
+    if private:
+        phrase = ("company exists but requires" if len(private) == 1
+                  else "companies exist but require")
+        print("\n%d %s authentication (HTTP 401). No token will ever fix that — "
+              'mark them "disabled": true:' % (len(private), phrase))
+        for name in private:
+            print("  %s" % name)
 
     if inconclusive:
         print("\n%d compan%s untested (endpoint unreachable): %s"

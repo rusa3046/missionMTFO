@@ -126,10 +126,39 @@ jobs:
               ;;
           esac
 
+      - name: Validate before committing
+        id: validate
+        # A pushed commit cannot be validated after the fact: pushes made with the
+        # default GITHUB_TOKEN never trigger workflows, so selftest.yml will NOT
+        # run on the state/config commits this job creates. The check has to
+        # happen here, before anything is committed.
+        if: always() && steps.guard.outputs.run == 'true'
+        run: |
+          set -eo pipefail
+          python3 poller.py --selftest
+          python3 - <<'PY'
+          import json, sqlite3, sys
+          cfg = json.load(open("companies.json"))
+          enabled = [e for e in cfg["companies"] if not e.get("disabled")]
+          for e in enabled:
+              if e["ats"] == "workday":
+                  assert all(e.get(k) for k in ("host", "tenant", "site")), e["company"]
+              else:
+                  assert e.get("token"), e["company"]
+          rows = sqlite3.connect("seen.db").execute(
+              "select count(*) from seen").fetchone()[0]
+          print("config: %d companies (%d enabled) — seen.db: %d rows"
+                % (len(cfg["companies"]), len(enabled), rows))
+          if rows == 0:
+              print("::warning title=Empty database::seen.db has no rows; the next "
+                    "digest would treat every open posting as new.")
+          PY
+
       - name: Commit state
         # always(): the poller records non-matching postings even on a run that
         # ends in a delivery failure, and that progress must not be thrown away.
-        if: always() && steps.guard.outputs.run == 'true'
+        # But never commit a config or database that just failed validation.
+        if: always() && steps.guard.outputs.run == 'true' && steps.validate.outcome == 'success'
         env:
           BRANCH: ${{ github.ref_name }}
         run: |

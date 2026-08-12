@@ -94,9 +94,13 @@ digest      → the real thing (this is what the 7am schedule runs)
 
 ### What fix-tokens can and can't repair
 
-**Workday 422s are the easy win.** 422 means the tenant exists but the site segment is
-wrong, and `discover.py` enumerates ~25 known segments (`External`, `EXTERNAL_CAREERS`,
-`{tenant}careers`, …) until one answers. Most 422s fall to this.
+**Workday needs the instance right before the site matters.** A tenant lives on exactly
+one instance — `wd1`, `wd5`, `wd12` — and the label isn't derivable from the company name.
+Get it wrong and every site probe fails, which is why the first `fix-tokens` run repaired
+none of the nine Workday entries. `discover.py` now probes each candidate instance once
+and reads the status code: **200** means done, **422** means the tenant is there and only
+the site segment is wrong (then it enumerates ~25 known segments), **401** means the board
+is private and no token will ever fix it, **404** means try the next instance.
 
 **404s depend on the slug being guessable from the company name.** Candidates come from
 `slug_candidates()`, which only squashes and hyphenates words: `Trade Republic` yields
@@ -116,8 +120,17 @@ Three safety properties, each learned from a way this can go wrong:
   generic slug can match an unrelated company's board. Without it, cross-ATS matches are
   reported as suggestions and left unapplied.
 
-A `fix-tokens` commit deliberately does **not** carry `[skip ci]` — a config change should
-be re-validated by `selftest.yml`. Only the daily state commits skip CI.
+### Nothing this job commits is checked by CI
+
+Pushes made with the default `GITHUB_TOKEN` **never trigger workflows** — GitHub suppresses
+that to prevent recursion. So `selftest.yml` does not run on the `chore:` commits this job
+creates, no matter what the commit message says.
+
+Validation therefore happens **in the job, before the commit**: the workflow runs
+`--selftest` plus a structural check of `companies.json` and `seen.db`, and the commit step
+is skipped entirely if that fails. `discover.py` independently validates its own output and
+refuses to write (exit 3) if a repair would drop an entry, alter the filters, or produce
+invalid JSON.
 
 ---
 
