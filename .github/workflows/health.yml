@@ -1,0 +1,24 @@
+name: weekly health
+
+# ATS tokens rot silently. This run fails — and GitHub emails you about a failed
+# workflow — when more than 30% of enabled companies are erroring, which is the
+# state where "no new roles today" stops meaning anything.
+on:
+  schedule:
+    - cron: '0 16 * * 1'   # Mondays, ~08:00/09:00 Pacific depending on DST
+  workflow_dispatch:
+
+permissions:
+  contents: read           # unlike the digest, this never writes state
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check endpoint health
+        run: python3 poller.py --health

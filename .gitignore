@@ -1,0 +1,28 @@
+# Deliberately NOT ignored — the Actions runner has no memory between runs, so
+# these three files are the state, and they are committed back after each run:
+#   seen.db        dedup state (~4,600 seeded postings; losing it means a flood)
+#   runs.log       one line per run; the record that the job is still alive
+#   matches.jsonl  append-only log of every match
+
+# SQLite sidecars and the self-test scratch DB are never worth committing.
+_selftest.db
+_selftest_runs.log
+*.db-journal
+*.db-wal
+*.db-shm
+
+poller.log
+companies.json.bak
+
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
