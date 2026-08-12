@@ -1,0 +1,142 @@
+name: daily digest
+
+on:
+  schedule:
+    # GitHub cron is UTC and does NOT observe DST, so 07:00 Pacific is two
+    # different UTC hours depending on the season. Both entries fire year-round;
+    # the guard step below drops whichever one is not 07:00 in Los Angeles today.
+    - cron: '0 14 * * *'   # 07:00 PDT (roughly Mar–Nov)
+    - cron: '0 15 * * *'   # 07:00 PST (roughly Nov–Mar)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'What to run'
+        type: choice
+        default: digest
+        options: [digest, seed, verify, health]
+
+permissions:
+  contents: write          # the run commits seen.db back to the branch
+
+concurrency:
+  # Runs share one SQLite file, so they must never overlap. Queue, don't cancel:
+  # a cancelled run could die between sending the email and committing the DB.
+  group: job-poller-state
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    # A hung ATS endpoint must not burn the monthly Actions budget. The poller's
+    # own per-request timeouts should fire long before this does.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the rebase-and-retry path below has something to
+          # rebase onto; a shallow clone makes `git pull --rebase` unreliable.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Is it 07:00 in Los Angeles?
+        id: guard
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          now = datetime.now(ZoneInfo("America/Los_Angeles"))
+          event = os.environ["EVENT"]
+          # Manual runs always proceed; only the cron pair needs filtering.
+          run = event != "schedule" or now.hour == 7
+          print("Pacific local time: %s  (event=%s)" % (now.strftime("%Y-%m-%d %H:%M %Z"), event))
+          if not run:
+              print("Not 07:00 Pacific — this is the other DST cron entry. Skipping.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("run=%s\n" % ("true" if run else "false"))
+          PY
+
+      - name: Poll and send digest
+        if: steps.guard.outputs.run == 'true'
+        env:
+          SMTP_HOST:  ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:  ${{ secrets.SMTP_PORT }}
+          SMTP_USER:  ${{ secrets.SMTP_USER }}
+          SMTP_PASS:  ${{ secrets.SMTP_PASS }}
+          EMAIL_TO:   ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          # Optional fallback; the poller uses these only when SMTP is unset.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ inputs.mode || 'digest' }}
+        run: |
+          set -o pipefail
+          case "$MODE" in
+            seed)   python3 poller.py --seed   ;;
+            verify) python3 poller.py --verify ;;
+            health) python3 poller.py --health ;;
+            *)      python3 poller.py --digest ;;
+          esac
+
+      - name: Commit state
+        # always(): the poller records non-matching postings even on a run that
+        # ends in a delivery failure, and that progress must not be thrown away.
+        if: always() && steps.guard.outputs.run == 'true'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for f in seen.db runs.log matches.jsonl; do
+            if [ -e "$f" ]; then git add -- "$f"; fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "No state changes to commit."
+            exit 0
+          fi
+
+          # [skip ci] keeps this commit from retriggering the push-driven selftest
+          # workflow every morning.
+          git commit -m "chore: poller state $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
+
+          pushed=false
+          for attempt in 1 2; do
+            if git push origin "HEAD:${BRANCH}"; then
+              pushed=true
+              break
+            fi
+            echo "Push rejected — rebasing onto the latest ${BRANCH} and retrying once."
+            # NOTE the inversion: during a rebase "theirs" is *our* replayed commit,
+            # not the upstream. seen.db is binary and cannot be merged, and our run
+            # polled most recently, so our copy wins. runs.log and matches.jsonl
+            # union-merge via .gitattributes, so no history is lost there. Worst
+            # case a handful of roles get emailed twice — never dropped.
+            git pull --rebase -X theirs origin "${BRANCH}" \
+              || echo "Rebase failed; the retry push will probably fail too."
+          done
+
+          if [ "$pushed" != true ]; then
+            echo "::error::Could not push poller state after 2 attempts. The remote seen.db is unchanged, so today's roles may be emailed again tomorrow."
+            exit 1
+          fi
+
+      - name: Run summary
+        if: always() && steps.guard.outputs.run == 'true'
+        run: |
+          {
+            echo "### Poller run"
+            echo ""
+            echo '```'
+            tail -n 10 runs.log 2>/dev/null || echo "(no runs.log yet)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

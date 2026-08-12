@@ -1,0 +1,7 @@
+# seen.db is a binary blob. Never diff or attempt to merge it as text.
+seen.db binary
+
+# Append-only logs. If two runs ever race, keep both sides rather than
+# conflicting — losing a run's history to a merge marker helps nobody.
+runs.log      merge=union
+matches.jsonl merge=union
