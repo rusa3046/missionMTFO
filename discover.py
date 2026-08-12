@@ -117,6 +117,9 @@ def probe(url, method="GET", body=None):
     return payload
 
 
+_REAL_PROBE = probe
+
+
 def slug_candidates(name):
     """Generate plausible slugs from a company name, most likely first."""
     base = name.lower()
@@ -726,6 +729,179 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
     return 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Offline self-test — no network, no writes outside a temp directory.
+#
+# Every case below is a regression for a bug this file actually shipped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SELFTEST_CONFIG = '''{
+  "_README": "synthetic fixture",
+  "filters": {"title_include": ["engineer"], "title_exclude": []},
+  "companies": [
+    {"tier": 1, "company": "Acme",        "ats": "greenhouse", "token": "acme",     "verified": false},
+    {"tier": 2, "company": "Trade Test",  "ats": "greenhouse", "token": "wrongtok", "verified": false},
+    {"tier": 2, "company": "Switcheroo",  "ats": "greenhouse", "token": "nope",     "verified": false},
+    {"tier": 3, "company": "Wanderer",    "ats": "workday", "host": "wanderer.wd1.myworkdayjobs.com", "tenant": "wanderer", "site": "Careers", "verified": false, "search_text": "engineer"}
+  ]
+}
+'''
+
+
+def cmd_selftest():
+    import tempfile
+
+    print("Running offline self-test (no network)...\n")
+    failed = [0]
+
+    def check(desc, ok, detail=""):
+        if not ok:
+            failed[0] += 1
+        print("  %s %s%s" % ("ok  " if ok else "FAIL", desc,
+                             ("   <- " + detail) if detail and not ok else ""))
+
+    global CONFIG_PATH, DELAY, NET
+    original_path, original_delay = CONFIG_PATH, DELAY
+    tmp = tempfile.mkdtemp(prefix="discover-selftest-")
+    CONFIG_PATH = Path(tmp) / "companies.json"
+    DELAY = 0.0
+
+    def reset():
+        global NET
+        CONFIG_PATH.write_text(SELFTEST_CONFIG)
+        NET = NetStats()
+
+    def entry(name):
+        return {e["company"]: e for e in
+                json.loads(CONFIG_PATH.read_text())["companies"]}[name]
+
+    try:
+        print("ats fingerprints")
+        h = detect_ats("https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External", "")
+        check("workday board url without a locale",
+              ("workday", {"host": "zillow.wd5.myworkdayjobs.com",
+                           "tenant": "zillow", "site": "Zillow_Group_External"}) in h, str(h))
+        h = detect_ats("https://co.wd12.myworkdayjobs.com/en-US/Capital_One", "")
+        check("workday board url with a locale",
+              any(f.get("site") == "Capital_One" for _, f in h), str(h))
+        h = detect_ats("https://x", 'fetch("https://a.wd1.myworkdayjobs.com/wday/cxs/acmecorp/Careers/jobs")')
+        check("cxs path yields the authoritative tenant",
+              any(f.get("tenant") == "acmecorp" for _, f in h), str(h))
+        h = detect_ats("https://ibqbjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Honeywell/jobs", "")
+        check("oracle recruiting cloud",
+              ("oracle", {"host": "ibqbjb.fa.ocs.oraclecloud.com", "site": "Honeywell"}) in h, str(h))
+        check("greenhouse api url",
+              ("greenhouse", {"token": "acmeco"}) in
+              detect_ats("https://x", "boards-api.greenhouse.io/v1/boards/acmeco/jobs"))
+        check("greenhouse embed form",
+              ("greenhouse", {"token": "acmeco"}) in
+              detect_ats("https://x", "greenhouse.io/embed/job_board?for=acmeco"))
+        check("ashby slug containing a dot",
+              ("ashby", {"token": "perplexity.ai"}) in
+              detect_ats("https://x", "https://jobs.ashbyhq.com/perplexity.ai"))
+        check("lever", ("lever", {"token": "acme-inc"}) in
+              detect_ats("https://x", "https://jobs.lever.co/acme-inc/abc"))
+        check("smartrecruiters", ("smartrecruiters", {"token": "Revolut"}) in
+              detect_ats("https://x", "api.smartrecruiters.com/v1/companies/Revolut/postings"))
+        check("path fragments are not treated as slugs",
+              detect_ats("https://x", "boards.greenhouse.io/embed/job_board") == [])
+        check("a page with no ats yields nothing",
+              detect_ats("https://x", "<html>nothing here</html>") == [])
+        check("config line is valid json with workday fields",
+              json.loads(config_line("workday", {"host": "h", "tenant": "t", "site": "s"}))["search_text"] == "software engineer")
+
+        print("\nworkday host search")
+        # Regression: probing only 'External' missed a host whose configured
+        # site was already correct (Capital One, wd12/Capital_One).
+        def stub_capone(url, method="GET", body=None):
+            NET.answered += 1
+            if "co.wd12.myworkdayjobs.com/wday/cxs/co/Capital_One/jobs" in url:
+                return {"jobPostings": [{"t": 1}], "total": 400}
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, None)
+        globals()["probe"] = stub_capone
+        reset()
+        check("searches past a 422 and uses the configured site",
+              discover_workday_host("co.wd1.myworkdayjobs.com", "co", "Capital_One")
+              == ("co.wd12.myworkdayjobs.com", "Capital_One", "ok"))
+
+        def stub_all_422(url, method="GET", body=None):
+            NET.answered += 1
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, None)
+        globals()["probe"] = stub_all_422
+        check("422 everywhere reports site-unknown, never a false hit",
+              discover_workday_host("a.wd1.myworkdayjobs.com", "a", "S")[1:] == (None, "site-unknown"))
+
+        def stub_401(url, method="GET", body=None):
+            NET.answered += 1
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        globals()["probe"] = stub_401
+        check("401 is reported as private, not retried forever",
+              discover_workday_host("d.wd5.myworkdayjobs.com", "d", "S")[2] == "auth")
+
+        print("\nconfig repair")
+        def stub_repair(url, method="GET", body=None):
+            NET.answered += 1
+            if url == "https://boards-api.greenhouse.io/v1/boards/trade-test/jobs":
+                return {"jobs": [{"id": 1}] * 7}
+            if url == "https://api.ashbyhq.com/posting-api/job-board/switcheroo":
+                return {"jobs": [{"id": 1}] * 99}
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        globals()["probe"] = stub_repair
+
+        reset()
+        before = CONFIG_PATH.read_text()
+        cmd_fix_config()
+        after = CONFIG_PATH.read_text()
+        check("same-ats token repaired", entry("Trade Test")["token"] == "trade-test",
+              repr(entry("Trade Test").get("token")))
+        check("repaired entry marked verified", entry("Trade Test")["verified"] is True)
+        check("line count preserved",
+              len(before.splitlines()) == len(after.splitlines()))
+        check("only the repaired line differs",
+              sum(1 for a, b in zip(before.splitlines(), after.splitlines()) if a != b) == 1)
+        check("working entries untouched", entry("Acme")["verified"] is False)
+        check("ats never switched without consent", entry("Switcheroo")["ats"] == "greenhouse")
+
+        reset()
+        cmd_fix_config(allow_ats_switch=True)
+        check("--allow-ats-switch does switch", entry("Switcheroo")["ats"] == "ashby")
+
+        reset()
+        cmd_fix_config(dry_run=True)
+        check("--dry-run writes nothing", CONFIG_PATH.read_text() == SELFTEST_CONFIG)
+
+        print("\nrefusing to write bad data")
+        good = json.loads(SELFTEST_CONFIG)
+        check("rejects a dropped entry", validate_config(
+            json.dumps({"filters": good["filters"],
+                        "companies": good["companies"][:-1]}), good) is not None)
+        check("rejects modified filters", validate_config(
+            json.dumps({"filters": {}, "companies": good["companies"]}), good) is not None)
+        check("rejects invalid json", validate_config("{nope", good) is not None)
+        check("accepts an untouched config",
+              validate_config(SELFTEST_CONFIG, good) is None)
+
+        print("\ndead network")
+        def stub_offline(url, method="GET", body=None):
+            NET.failed += 1
+            raise ProbeError("URLError: tunnel blocked")
+        globals()["probe"] = stub_offline
+        reset()
+        rc = cmd_fix_config()
+        check("aborts with exit 2 instead of condemning every board", rc == 2, "rc=%s" % rc)
+        check("config untouched after an aborted run",
+              CONFIG_PATH.read_text() == SELFTEST_CONFIG)
+    finally:
+        globals()["probe"] = _REAL_PROBE
+        CONFIG_PATH, DELAY = original_path, original_delay
+        for leftover in Path(tmp).glob("*"):
+            leftover.unlink()
+        Path(tmp).rmdir()
+
+    print("\n%s" % ("ALL PASSED" if failed[0] == 0 else "%d FAILED" % failed[0]))
+    return 0 if failed[0] == 0 else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("company", nargs="?", help="company name to search for")
@@ -742,8 +918,12 @@ def main():
                          "(off by default — a generic slug can match the wrong company)")
     ap.add_argument("--inspect", nargs="+", metavar="URL",
                     help="read careers pages and report which ATS each one runs")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline logic tests, no network")
     a = ap.parse_args()
 
+    if a.selftest:
+        return cmd_selftest()
     if a.inspect:
         return cmd_inspect(a.inspect)
     if a.fix_config:

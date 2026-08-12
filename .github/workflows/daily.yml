@@ -152,6 +152,7 @@ jobs:
         run: |
           set -eo pipefail
           python3 poller.py --selftest
+          python3 discover.py --selftest
           python3 - <<'PY'
           import json, sqlite3, sys
           cfg = json.load(open("companies.json"))
