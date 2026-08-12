@@ -34,7 +34,7 @@
   "companies": [
     {"tier": 1, "company": "Anthropic",      "ats": "greenhouse",      "token": "anthropic",     "verified": false},
     {"tier": 1, "company": "OpenAI",         "ats": "ashby",           "token": "openai",        "verified": false},
-    {"tier": 1, "company": "Cursor",         "ats": "ashby",           "token": "anysphere",     "verified": false, "notes": "Anysphere is the legal entity"},
+    {"tier": 1, "company": "Cursor",         "ats": "ashby",           "token": "cursor",     "verified": true, "notes": "Anysphere is the legal entity"},
     {"tier": 1, "company": "Sierra",         "ats": "ashby",           "token": "sierra",        "verified": false},
     {"tier": 1, "company": "Harvey",         "ats": "ashby",           "token": "harvey",        "verified": false},
     {"tier": 1, "company": "Perplexity",     "ats": "greenhouse",      "token": "perplexityai",  "verified": false},
