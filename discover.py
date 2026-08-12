@@ -364,6 +364,170 @@ def _entry_works(entry):
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# --inspect: what is this careers page actually running?
+#
+# Four of the "broken tokens" in this repo turned out to be the wrong ATS
+# entirely — Zillow was on Workday, not Greenhouse; Honeywell on Oracle, not
+# Workday. Guessing slugs cannot find those. Reading the page can.
+# ─────────────────────────────────────────────────────────────────────────────
+
+INSPECT_UA = ("Mozilla/5.0 (compatible; job-poller-discovery/1.0; "
+              "personal job search)")
+INSPECT_MAX_BYTES = 2_000_000
+
+WORKDAY_URL = re.compile(
+    r"https?://([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)(?:/[A-Za-z]{2}-[A-Za-z]{2})?/([A-Za-z0-9_-]+)")
+WORKDAY_CXS = re.compile(r"/wday/cxs/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/jobs")
+ORACLE_URL = re.compile(
+    r"https?://([a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com)"
+    r"/hcmUI/CandidateExperience/[^/]+/sites/([A-Za-z0-9_-]+)")
+
+SIMPLE_FINGERPRINTS = [
+    ("greenhouse", re.compile(
+        r"(?:boards-api|job-boards|boards)\.greenhouse\.io/(?:v1/boards/)?([A-Za-z0-9_-]+)")),
+    ("greenhouse", re.compile(r"greenhouse\.io/embed/job_board\?for=([A-Za-z0-9_-]+)")),
+    ("lever", re.compile(r"(?:jobs\.lever\.co|api\.lever\.co/v0/postings)/([A-Za-z0-9_-]+)")),
+    ("ashby", re.compile(
+        r"(?:jobs\.ashbyhq\.com|api\.ashbyhq\.com/posting-api/job-board)/([A-Za-z0-9_.-]+)")),
+    ("smartrecruiters", re.compile(
+        r"(?:jobs\.smartrecruiters\.com|api\.smartrecruiters\.com/v1/companies)/([A-Za-z0-9_-]+)")),
+]
+
+# Slugs that are really path fragments, not board identifiers.
+SLUG_NOISE = {"v1", "embed", "job_board", "jobs", "static", "assets", "api",
+              "posting-api", "boards", "en", "en-US", "images", "css", "js"}
+
+# Platforms with no public JSON board API. Recognising one is a real answer:
+# it means "stop hunting for a token, disable this entry".
+CUSTOM_PLATFORMS = [
+    ("Phenom People", re.compile(r"phenompeople\.com|phenom\.com", re.I)),
+    ("Radancy / TalentBrew", re.compile(r"radancy\.com|talentbrew", re.I)),
+    ("Eightfold", re.compile(r"eightfold\.ai", re.I)),
+    ("iCIMS", re.compile(r"icims\.com", re.I)),
+    ("Taleo", re.compile(r"taleo\.net", re.I)),
+    ("SAP SuccessFactors", re.compile(r"successfactors\.com|sapsf\.com", re.I)),
+    ("Workable", re.compile(r"apply\.workable\.com", re.I)),
+    ("Jobvite", re.compile(r"jobvite\.com", re.I)),
+    ("Teamtailor", re.compile(r"teamtailor\.com", re.I)),
+    ("Recruitee", re.compile(r"recruitee\.com", re.I)),
+    ("Personio", re.compile(r"jobs\.personio\.(?:de|com)", re.I)),
+]
+
+
+def fetch_page(url):
+    """GET a page as text, following redirects. Returns (status, final_url, body)."""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": INSPECT_UA,
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            raw = r.read(INSPECT_MAX_BYTES)
+            charset = r.headers.get_content_charset() or "utf-8"
+            return r.status, r.geturl(), raw.decode(charset, errors="replace")
+    except urllib.error.HTTPError as e:
+        # A 403 or 404 page still often names its ATS in a script tag.
+        try:
+            body = e.read(INSPECT_MAX_BYTES).decode("utf-8", errors="replace")
+        except Exception:                                        # noqa: BLE001
+            body = ""
+        return e.code, url, body
+    except Exception as e:                                       # noqa: BLE001
+        raise ProbeError("%s: %s" % (type(e).__name__, e))
+
+
+def detect_ats(final_url, body):
+    """Find every ATS fingerprint in a URL plus page source. Best guess first."""
+    hay = final_url + "\n" + body
+    found = []
+
+    # Workday: the /wday/cxs/ form is authoritative because it names the tenant.
+    for tenant, site in WORKDAY_CXS.findall(hay):
+        host = ""
+        m = re.search(r"https?://([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)", hay)
+        if m:
+            host = m.group(1)
+        found.append(("workday", {"host": host, "tenant": tenant, "site": site}))
+    for host, site in WORKDAY_URL.findall(hay):
+        found.append(("workday", {"host": host, "tenant": host.split(".")[0],
+                                  "site": site}))
+
+    for host, site in ORACLE_URL.findall(hay):
+        found.append(("oracle", {"host": host, "site": site}))
+
+    for ats, pattern in SIMPLE_FINGERPRINTS:
+        for slug in pattern.findall(hay):
+            if slug and slug not in SLUG_NOISE:
+                found.append((ats, {"token": slug}))
+
+    seen, unique = set(), []
+    for ats, fields in found:
+        key = (ats, tuple(sorted(fields.items())))
+        if key not in seen:
+            seen.add(key)
+            unique.append((ats, fields))
+    return unique
+
+
+def config_line(ats, fields):
+    """A ready-to-paste companies.json entry for what was detected."""
+    entry = {"tier": 3, "company": "REPLACE_ME", "ats": ats}
+    entry.update(fields)
+    if ats == "workday":
+        entry["search_text"] = "software engineer"
+    entry["verified"] = False
+    return json.dumps(entry)
+
+
+def cmd_inspect(urls):
+    """Report what ATS each careers URL is actually running."""
+    print("Inspecting %d URL(s). Following redirects; reading page source.\n" % len(urls))
+    unknown = 0
+
+    for url in urls:
+        print("=" * 72)
+        print(url)
+        try:
+            status, final_url, body = fetch_page(url)
+        except ProbeError as e:
+            print("  UNREACHABLE  %s" % e)
+            unknown += 1
+            continue
+
+        if final_url != url:
+            print("  redirected -> %s" % final_url)
+        print("  HTTP %s, %d bytes of source" % (status, len(body)))
+
+        hits = detect_ats(final_url, body)
+        if hits:
+            for ats, fields in hits:
+                if ats == "oracle":
+                    print("  ORACLE    Oracle Recruiting Cloud  host=%s site=%s"
+                          % (fields["host"], fields["site"]))
+                    print("            No adapter for this ATS yet.")
+                else:
+                    print("  DETECTED  %-16s %s"
+                          % (ats, " ".join("%s=%s" % kv for kv in fields.items())))
+                    print("            %s" % config_line(ats, fields))
+            continue
+
+        platform = next((n for n, p in CUSTOM_PLATFORMS if p.search(body)), None)
+        if platform:
+            print("  PLATFORM  %s — no public JSON board API." % platform)
+            print('            Mark this company "disabled": true.')
+        else:
+            print("  NOTHING   no known ATS fingerprint in the source.")
+            print("            The board is probably rendered by JavaScript. Click "
+                  "into a single posting and inspect that URL instead.")
+            unknown += 1
+        time.sleep(DELAY)
+
+    print("\n%d of %d URL(s) could not be identified." % (unknown, len(urls)))
+    return 0
+
+
 def workday_host_candidates(host, tenant):
     """The configured host first, then every plausible instance for this tenant."""
     cands = [host] if host else []
@@ -562,8 +726,12 @@ def main():
     ap.add_argument("--allow-ats-switch", action="store_true",
                     help="with --fix-config: permit moving a company between ATSes "
                          "(off by default — a generic slug can match the wrong company)")
+    ap.add_argument("--inspect", nargs="+", metavar="URL",
+                    help="read careers pages and report which ATS each one runs")
     a = ap.parse_args()
 
+    if a.inspect:
+        return cmd_inspect(a.inspect)
     if a.fix_config:
         return cmd_fix_config(dry_run=a.dry_run, allow_ats_switch=a.allow_ats_switch)
     if a.workday:

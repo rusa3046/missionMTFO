@@ -13,11 +13,15 @@ on:
         description: 'What to run'
         type: choice
         default: digest
-        options: [digest, seed, verify, health, fix-tokens]
+        options: [digest, seed, verify, health, fix-tokens, inspect]
       allow_ats_switch:
         description: 'fix-tokens only: let a company move between ATSes (review the dry run first)'
         type: boolean
         default: false
+      urls:
+        description: 'inspect only: careers page URLs, separated by spaces'
+        type: string
+        default: ''
 
 permissions:
   contents: write          # the run commits seen.db back to the branch
@@ -84,11 +88,23 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           MODE: ${{ inputs.mode || 'digest' }}
           ALLOW_ATS_SWITCH: ${{ inputs.allow_ats_switch }}
+          URLS: ${{ inputs.urls }}
         run: |
           set -o pipefail
           case "$MODE" in
             seed)
               python3 poller.py --seed
+              ;;
+            inspect)
+              if [ -z "${URLS// /}" ]; then
+                echo "::error title=No URLs::inspect needs the 'urls' input — paste one or more careers page URLs, separated by spaces."
+                exit 1
+              fi
+              # Read-only: writes no files, so the commit step finds nothing to do.
+              # -f disables globbing so a URL containing ? or * survives expansion.
+              set -f
+              python3 discover.py --inspect $URLS
+              set +f
               ;;
             fix-tokens)
               # Repairs companies.json in place and lets the commit step push it.

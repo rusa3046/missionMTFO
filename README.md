@@ -75,11 +75,39 @@ which has a **mode** dropdown:
 
 ```
 verify      → tests every entry against its live endpoint, reports what's broken
+inspect     → reads careers pages and reports which ATS each one actually runs
 fix-tokens  → runs discover.py --fix-config and commits the repaired companies.json
 seed        → records everything currently posted WITHOUT emailing you
 health      → exits nonzero if >30% of enabled companies are erroring
 digest      → the real thing (this is what the 7am schedule runs)
 ```
+
+### inspect: when the token isn't the problem
+
+Repeatedly, an entry that looked like a bad token was on the **wrong ATS entirely** —
+Zillow was on Workday not Greenhouse, Honeywell on Oracle not Workday. No amount of slug
+guessing finds those, because the guesser is asking the wrong endpoint.
+
+Paste careers URLs into the **urls** input (space-separated) and run **inspect**. It
+follows redirects, reads the page source, and reports the fingerprint plus a ready-to-paste
+config line:
+
+```
+DETECTED  workday   host=zillow.wd5.myworkdayjobs.com tenant=zillow site=Zillow_Group_External
+          {"tier": 3, "company": "REPLACE_ME", "ats": "workday", "host": "...", ...}
+```
+
+It recognises Greenhouse, Lever, Ashby, SmartRecruiters, Workday (both the board URL and
+the authoritative `/wday/cxs/TENANT/SITE/` path) and Oracle Recruiting Cloud. It also
+recognises platforms with **no** public API — Phenom, Radancy, Eightfold, iCIMS, Taleo,
+SuccessFactors and friends — and says so, which is a real answer: stop hunting, mark that
+company `"disabled": true`.
+
+`NOTHING` means the board is rendered by JavaScript and the fingerprint isn't in the served
+HTML. Click into a single job posting and inspect *that* URL instead — it usually lands on
+the real ATS host.
+
+This mode writes nothing and commits nothing.
 
 1. Run **verify**. It exits nonzero whenever anything needs fixing, so **a red X here is
    the command working**, not the workflow breaking — read the FAIL/WARN list.
