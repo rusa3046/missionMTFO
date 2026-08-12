@@ -74,19 +74,50 @@ let the schedule take the first swing. Use **Actions → daily digest → Run wo
 which has a **mode** dropdown:
 
 ```
-verify   → tests every entry against its live endpoint, reports what's broken
-seed     → records everything currently posted WITHOUT emailing you
-health   → exits nonzero if >30% of enabled companies are erroring
-digest   → the real thing (this is what the 7am schedule runs)
+verify      → tests every entry against its live endpoint, reports what's broken
+fix-tokens  → runs discover.py --fix-config and commits the repaired companies.json
+seed        → records everything currently posted WITHOUT emailing you
+health      → exits nonzero if >30% of enabled companies are erroring
+digest      → the real thing (this is what the 7am schedule runs)
 ```
 
-1. Run **verify**. Fix the failures — see *Finding the right token*, or run
-   `python3 discover.py --fix-config` locally, which repairs most of them automatically.
-2. Run **seed** once. This is not optional. Any company you just fixed has **zero** rows
+1. Run **verify**. It exits nonzero whenever anything needs fixing, so **a red X here is
+   the command working**, not the workflow breaking — read the FAIL/WARN list.
+2. Run **fix-tokens** to repair what's repairable. It edits `companies.json` in place and
+   commits it. Review that commit's diff before moving on.
+3. Run **verify** again to confirm the count improved.
+4. Run **seed** once. This is not optional. Any company you just repaired has **zero** rows
    in `seen.db`, so its first digest would dump every currently-open role at once rather
    than the handful posted overnight.
-3. Run **digest** manually once to confirm the email actually lands.
-4. Leave it alone. The schedule takes over at 07:00 Pacific.
+5. Run **digest** manually once to confirm the email actually lands.
+6. Leave it alone. The schedule takes over at 07:00 Pacific.
+
+### What fix-tokens can and can't repair
+
+**Workday 422s are the easy win.** 422 means the tenant exists but the site segment is
+wrong, and `discover.py` enumerates ~25 known segments (`External`, `EXTERNAL_CAREERS`,
+`{tenant}careers`, …) until one answers. Most 422s fall to this.
+
+**404s depend on the slug being guessable from the company name.** Candidates come from
+`slug_candidates()`, which only squashes and hyphenates words: `Trade Republic` yields
+`traderepublic`, `trade-republic`, `trade`. It will **never** guess `notionhq` from
+`Notion`, or `perplexity-ai` from `Perplexity`. For those, open the careers page, read the
+real slug out of the URL, and edit `companies.json` by hand — see *Finding the right token*.
+
+Three safety properties, each learned from a way this can go wrong:
+
+- **A blocked network is not a finding.** Transport failures are counted separately from
+  HTTP 404s. If nothing answers, the command aborts with exit 2 and writes nothing, rather
+  than reporting that all 44 boards are gone.
+- **Your formatting survives.** Repairs are applied as targeted edits to the raw text, so
+  aligned columns and entry ordering are preserved. Only the repaired lines change.
+- **A company never changes ATS silently.** `token` and `site` are fixed in place. Moving a
+  company from Greenhouse to Ashby requires the **allow_ats_switch** checkbox, because a
+  generic slug can match an unrelated company's board. Without it, cross-ATS matches are
+  reported as suggestions and left unapplied.
+
+A `fix-tokens` commit deliberately does **not** carry `[skip ci]` — a config change should
+be re-validated by `selftest.yml`. Only the daily state commits skip CI.
 
 ---
 

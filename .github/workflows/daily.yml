@@ -13,7 +13,11 @@ on:
         description: 'What to run'
         type: choice
         default: digest
-        options: [digest, seed, verify, health]
+        options: [digest, seed, verify, health, fix-tokens]
+      allow_ats_switch:
+        description: 'fix-tokens only: let a company move between ATSes (review the dry run first)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write          # the run commits seen.db back to the branch
@@ -79,11 +83,28 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           MODE: ${{ inputs.mode || 'digest' }}
+          ALLOW_ATS_SWITCH: ${{ inputs.allow_ats_switch }}
         run: |
           set -o pipefail
           case "$MODE" in
             seed)
               python3 poller.py --seed
+              ;;
+            fix-tokens)
+              # Repairs companies.json in place and lets the commit step push it.
+              # Exit 2 means discover.py reached nothing and refused to write —
+              # a network problem, not 44 dead job boards.
+              args="--fix-config"
+              if [ "$ALLOW_ATS_SWITCH" = "true" ]; then
+                args="$args --allow-ats-switch"
+                echo "::warning title=ATS switching enabled::A company may be moved to a different ATS. Check the diff on the resulting commit."
+              fi
+              rc=0
+              python3 discover.py $args || rc=$?
+              if [ "$rc" -eq 2 ]; then
+                echo "::error title=No endpoint answered::discover.py could not reach any ATS host, so companies.json was left untouched."
+              fi
+              exit "$rc"
               ;;
             verify)
               # Exits nonzero whenever any entry needs fixing. That is the
@@ -116,18 +137,25 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          for f in seen.db runs.log matches.jsonl; do
+          for f in seen.db runs.log matches.jsonl companies.json; do
             if [ -e "$f" ]; then git add -- "$f"; fi
           done
 
           if git diff --cached --quiet; then
-            echo "No state changes to commit."
+            echo "Nothing changed — no commit."
             exit 0
           fi
 
-          # [skip ci] keeps this commit from retriggering the push-driven selftest
-          # workflow every morning.
-          git commit -m "chore: poller state $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
+          echo "Staged: $(git diff --cached --name-only | tr '\n' ' ')"
+          stamp="$(date -u +%Y-%m-%dT%H:%MZ)"
+          if git diff --cached --name-only | grep -qx 'companies.json'; then
+            # A config repair SHOULD be re-validated, so this commit deliberately
+            # does not skip CI — selftest.yml structurally checks companies.json.
+            git commit -m "chore: repair ATS tokens ${stamp}"
+          else
+            # Pure state. [skip ci] stops the daily commit retriggering selftest.
+            git commit -m "chore: poller state ${stamp} [skip ci]"
+          fi
 
           pushed=false
           for attempt in 1 2; do
