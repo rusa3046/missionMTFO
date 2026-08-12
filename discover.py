@@ -72,11 +72,15 @@ class NetStats:
 
 NET = NetStats()
 
-# Workday instance labels. A tenant lives on exactly one of these, and the label
-# is not derivable from the company — capitalone is wd1 or wd12 depending on when
-# they were provisioned. Guessing wrong makes every site probe fail, which is why
-# --fix-config found nothing for nine Workday tenants before this existed.
-WORKDAY_INSTANCES = ["wd1", "wd2", "wd3", "wd5", "wd10", "wd12", "wd101", "wd103"]
+# Workday instance labels. A tenant lives on exactly one of these and the label
+# is not derivable from the company: Capital One is wd12, Expedia is wd108.
+#
+# This list is a shortcut, not a solution — it can never be complete, and wd108
+# was only found by reading the careers page. When a Workday entry will not
+# resolve, --inspect on the company's careers URL is the reliable answer; this
+# sweep just saves a round trip when the instance happens to be a common one.
+WORKDAY_INSTANCES = ["wd1", "wd2", "wd3", "wd5", "wd10", "wd12", "wd101",
+                     "wd103", "wd105", "wd108"]
 
 # Site-path segments that Workday tenants overwhelmingly use, most common first.
 WORKDAY_SITES = [
@@ -536,42 +540,51 @@ def workday_host_candidates(host, tenant):
     return list(dict.fromkeys(c for c in cands if c))
 
 
-def discover_workday_host(host, tenant):
+def discover_workday_host(host, tenant, site=None):
     """
-    Find which instance actually hosts this tenant, using one cheap probe each.
+    Find which instance actually hosts this tenant.
 
-    The status code is the whole signal, so read it carefully:
-        200  this host AND this site are correct — done
-        422  tenant exists here, site segment is wrong — enumerate sites next
-        401  tenant exists but the board is private — no amount of guessing helps
-        404  wrong tenant for this host — try the next instance
-        (unreachable)  host does not exist — try the next instance
+    Two mistakes an earlier version of this made, both caught by real data:
 
-    Returns (host, site_or_None, status) where status is "ok", "site-unknown",
-    "auth", or "none".
+    It probed only the site 'External'. Capital One's site was already correct
+    ('Capital_One') and only the instance was wrong, so the right host was
+    tested with the wrong site and discarded. Every candidate host is now tried
+    with the CONFIGURED site first, then 'External'.
+
+    It returned at the first 422. Workday answers 422 for an unknown tenant as
+    well as an unknown site, so a 422 from the misconfigured host looked like
+    proof the tenant lived there — and the search stopped one instance short of
+    the truth. A 422 is now remembered as a weak signal and used only after
+    every candidate has been tried.
+
+    Returns (host, site_or_None, status): "ok", "site-unknown", "auth", "none".
     """
+    trials = [s for s in (site, "External") if s]
+    body = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": ""}
+    weak = None                      # answered 422: tenant *might* live here
+
     for candidate in workday_host_candidates(host, tenant):
-        url = "https://%s/wday/cxs/%s/External/jobs" % (candidate, tenant)
-        body = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": ""}
-        try:
-            payload = probe(url, method="POST", body=body)
-            if payload.get("jobPostings"):
-                print("  HOST  %s (site 'External' works)" % candidate)
-                return candidate, "External", "ok"
-            print("  host  %s reachable but 'External' is empty" % candidate)
-            return candidate, None, "site-unknown"
-        except urllib.error.HTTPError as e:
-            if e.code == 422:
-                print("  HOST  %s (tenant exists, site segment wrong)" % candidate)
-                return candidate, None, "site-unknown"
-            if e.code == 401:
-                print("  AUTH  %s requires authentication — not publicly pollable"
-                      % candidate)
-                return candidate, None, "auth"
-            # 404 and friends: wrong tenant for this instance.
-        except ProbeError:
-            pass                      # instance does not exist; that is expected
-        time.sleep(DELAY)
+        for trial in dict.fromkeys(trials):
+            url = "https://%s/wday/cxs/%s/%s/jobs" % (candidate, tenant, trial)
+            try:
+                payload = probe(url, method="POST", body=body)
+                if payload.get("jobPostings"):
+                    print("  HOST  %s site=%r works" % (candidate, trial))
+                    return candidate, trial, "ok"
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    print("  AUTH  %s requires authentication — not publicly "
+                          "pollable" % candidate)
+                    return candidate, None, "auth"
+                if e.code == 422 and weak is None:
+                    weak = candidate
+            except ProbeError:
+                break                # host does not resolve; skip its other trials
+            time.sleep(DELAY)
+
+    if weak:
+        print("  host  %s answered 422 — tenant may live here, site unknown" % weak)
+        return weak, None, "site-unknown"
     return None, None, "none"
 
 
@@ -597,7 +610,8 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         print("\n=== %s (%s) ===" % (name, ats))
 
         if ats == "workday":
-            host, site, status = discover_workday_host(entry.get("host"), entry["tenant"])
+            host, site, status = discover_workday_host(
+                entry.get("host"), entry["tenant"], entry.get("site"))
             if status == "auth":
                 private.append(name)
                 continue

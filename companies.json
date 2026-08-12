@@ -60,7 +60,7 @@
     {"tier": 2, "company": "Delivery Hero",  "ats": "smartrecruiters", "token": "DeliveryHero",  "verified": false},
     {"tier": 2, "company": "Personio",       "ats": "greenhouse",      "token": "personio",      "verified": false},
 
-    {"tier": "2B", "company": "Capital One", "ats": "workday", "host": "capitalone.wd1.myworkdayjobs.com", "tenant": "capitalone", "site": "Capital_One", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "Capital One", "ats": "workday", "host": "capitalone.wd12.myworkdayjobs.com", "tenant": "capitalone", "site": "Capital_One", "verified": true, "search_text": "software engineer"},
     {"tier": "2B", "company": "American Express", "ats": "workday", "host": "aexp.wd1.myworkdayjobs.com", "tenant": "aexp", "site": "AmericanExpress", "verified": false, "search_text": "engineer"},
     {"tier": "2B", "company": "CVS Health", "ats": "workday", "host": "cvshealth.wd1.myworkdayjobs.com", "tenant": "cvshealth", "site": "CVS_Health_Careers", "verified": false, "search_text": "software engineer"},
     {"tier": "2B", "company": "UnitedHealth/Optum", "ats": "workday", "host": "uhg.wd5.myworkdayjobs.com", "tenant": "uhg", "site": "UnitedHealthGroup", "verified": false, "search_text": "software engineer"},
@@ -74,7 +74,7 @@
     {"tier": "2B", "company": "Walmart Global Tech", "ats": "workday", "disabled": true, "verified": false, "notes": "careers.walmart.com is custom. Track via HiringCafe; watch the YOE floor on GenAI roles (often 6+)."},
     {"tier": "2B", "company": "JPMorgan Chase", "ats": "workday", "disabled": true, "verified": false, "notes": "Runs Oracle Recruiting Cloud, not Workday. Track via HiringCafe."},
 
-    {"tier": 3, "company": "Expedia",        "ats": "workday", "host": "expedia.wd5.myworkdayjobs.com", "tenant": "expedia", "site": "search", "verified": false, "search_text": "software engineer"},
+    {"tier": 3, "company": "Expedia",        "ats": "workday", "host": "expedia.wd108.myworkdayjobs.com", "tenant": "expedia", "site": "search", "verified": true, "search_text": "software engineer"},
     {"tier": 3, "company": "Zillow",         "ats": "workday", "host": "zillow.wd5.myworkdayjobs.com", "tenant": "zillow", "site": "Zillow_Group_External", "verified": true, "search_text": "software engineer"},
     {"tier": 3, "company": "Smartsheet",     "ats": "greenhouse",      "token": "smartsheet",    "verified": false},
     {"tier": 3, "company": "Remitly",        "ats": "greenhouse",      "token": "remitly",       "verified": false, "notes": "Seattle + payments. Arguably Tier 2 for you."},
