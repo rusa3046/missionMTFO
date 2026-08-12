@@ -6,6 +6,7 @@
 
 # SQLite sidecars and the self-test scratch DB are never worth committing.
 _selftest.db
+_selftest_runs.log
 *.db-journal
 *.db-wal
 *.db-shm

@@ -177,6 +177,12 @@ That ordering is deliberate throughout: `--digest` holds matching jobs out of `s
 until delivery is confirmed. A failed send repeats tomorrow; recording first would drop
 roles you never saw, silently and permanently. **Duplicates over loss.**
 
+**If `seen.db` ever goes missing anyway** — bad checkout, failed push, someone deletes it —
+`--digest` notices the database is empty and treats that run as a **seed**: it records
+everything, emails nothing, and says so loudly in the log. The next run resumes normally.
+An empty database is indistinguishable from "every posting on earth is new", and emailing
+4,600 roles is the one failure this project exists to prevent.
+
 **Repo growth:** each daily commit stores a fresh ~0.27 MB compressed copy of the DB —
 call it 100 MB/year. Fine for years. If it ever bothers you, `sqlite3 seen.db 'VACUUM;'`
 or squash the state commits.

@@ -357,6 +357,17 @@ def is_new(conn, key) -> bool:
     return conn.execute("SELECT 1 FROM seen WHERE key = ?", (key,)).fetchone() is None
 
 
+def db_is_seeded(conn) -> bool:
+    """
+    Has this database ever been seeded?
+
+    db_connect() happily creates an empty database, so "no rows" is
+    indistinguishable from "every posting on earth is new". Unattended, that
+    difference is thousands of emails, so --digest checks before it sends.
+    """
+    return conn.execute("SELECT 1 FROM seen LIMIT 1").fetchone() is not None
+
+
 def record(conn, job: Job, notified: bool):
     conn.execute(
         "INSERT OR IGNORE INTO seen (key, company, title, location, url, first_seen, notified) "
@@ -917,7 +928,29 @@ def cmd_digest(cfg):
     polled = len(enabled_companies(cfg))
 
     print("[%s] digest run — polling %d companies" % (_utc_stamp(), polled))
+    seeded = db_is_seeded(conn)
     jobs, errors = fetch_all(cfg, quiet=True)
+
+    if not seeded:
+        # An empty database means seen.db went missing — a bad checkout, a failed
+        # push, a lost cache. Every open posting looks new, and emailing all of
+        # them is the one failure this project exists to avoid. Seed and stay quiet.
+        n = 0
+        for j in jobs:
+            if is_new(conn, j.key):
+                record(conn, j, notified=False)
+                n += 1
+        conn.commit()
+        print("  [warn] seen.db was empty — treating this as a seed run, NOT a digest.",
+              file=sys.stderr)
+        print("  [warn] recorded %d postings without notifying. The next run will "
+              "email only genuinely new roles." % n, file=sys.stderr)
+        _report_errors(errors)
+        log_run("seed", polled=polled, ok=polled - len(errors), errors=len(errors),
+                new=n, matched=0, emailed="none", delivered=True,
+                seconds=time.time() - started)
+        conn.close()
+        return 0
 
     fresh, batch = [], set()
     for j in jobs:
@@ -1317,11 +1350,54 @@ def _selftest_http_retry(check):
         globals()["HTTP_BACKOFF"] = saved_backoff
 
 
+def _selftest_seed_guard(check):
+    print("\nempty-database guard")
+    global DB_PATH, RUNS_LOG
+    orig_db, orig_log = DB_PATH, RUNS_LOG
+    DB_PATH = HERE / "_selftest.db"
+    RUNS_LOG = HERE / "_selftest_runs.log"
+    DB_PATH.unlink(missing_ok=True)
+    RUNS_LOG.unlink(missing_ok=True)
+
+    cfg = {"filters": {"title_include": [r"engineer"]},
+           "companies": [{"company": "Anthropic", "ats": "greenhouse", "token": "a"},
+                         {"company": "Stripe", "ats": "greenhouse", "token": "s"}]}
+    canned = [Job("Anthropic", "greenhouse", "1", "Backend Engineer", "SF", "https://x/1"),
+              Job("Stripe", "greenhouse", "2", "Platform Engineer", "Remote", "https://x/2")]
+    calls = []
+
+    saved = {n: globals()[n] for n in ("fetch_all", "deliver_digest")}
+    globals()["fetch_all"] = lambda c, quiet=False: (list(canned), [])
+    globals()["deliver_digest"] = lambda js, errs, polled: calls.append(len(js)) or True
+    try:
+        rc = cmd_digest(cfg)
+        check("empty seen.db seeds instead of emailing", rc == 0 and calls == [],
+              "rc=%s calls=%s" % (rc, calls))
+
+        conn = db_connect()
+        rows = conn.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
+        notified = conn.execute("SELECT COUNT(*) FROM seen WHERE notified=1").fetchone()[0]
+        conn.close()
+        check("seed run records everything and notifies nothing",
+              rows == 2 and notified == 0, "rows=%d notified=%d" % (rows, notified))
+
+        canned.append(Job("Ramp", "ashby", "3", "Infrastructure Engineer", "NYC", "https://x/3"))
+        rc = cmd_digest(cfg)
+        check("the run after that delivers only the genuinely new role",
+              rc == 0 and calls == [1], "rc=%s calls=%s" % (rc, calls))
+    finally:
+        globals().update(saved)
+        DB_PATH.unlink(missing_ok=True)
+        RUNS_LOG.unlink(missing_ok=True)
+        DB_PATH, RUNS_LOG = orig_db, orig_log
+
+
 def cmd_selftest():
     print("Running offline self-test (no network)...\n")
     check = _Check()
     _selftest_filters(check)
     _selftest_dedup(check)
+    _selftest_seed_guard(check)
     _selftest_grouping(check)
     _selftest_subjects(check)
     _selftest_rendering(check)
