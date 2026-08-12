@@ -178,11 +178,12 @@ jobs:
           echo "Staged: $(git diff --cached --name-only | tr '\n' ' ')"
           stamp="$(date -u +%Y-%m-%dT%H:%MZ)"
           if git diff --cached --name-only | grep -qx 'companies.json'; then
-            # A config repair SHOULD be re-validated, so this commit deliberately
-            # does not skip CI — selftest.yml structurally checks companies.json.
+            # Distinct message so a config repair is findable in git log. Note that
+            # [skip ci] is decorative either way: pushes made with the default
+            # GITHUB_TOKEN never trigger workflows, so no CI runs on these commits.
+            # The "Validate before committing" step above is the only gate.
             git commit -m "chore: repair ATS tokens ${stamp}"
           else
-            # Pure state. [skip ci] stops the daily commit retriggering selftest.
             git commit -m "chore: poller state ${stamp} [skip ci]"
           fi
 
