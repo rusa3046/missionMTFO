@@ -11,8 +11,11 @@
     ],
     "title_exclude": [
       "\\b(intern|internship|apprentice|co-?op)\\b",
-      "\\b(staff|principal|distinguished|fellow|architect)\\b",
-      "\\b(director|manager|head of|vp|vice president|lead engineer)\\b",
+      "\\b(senior|snr|sr|lead|staff|principal|distinguished|fellow|architect)\\b",
+      "\\b(director|manager|head of|vp|vice president)\\b",
+      "\\b(engineer|engineering|swe|sde|developer|programmer)\\s*[-,]?\\s*(level\\s*)?(2|3|4|5|6|ii|iii|iv|v|vi)\\b",
+      "\\b[lt][3-9]\\b",
+      "\\b(experienced|expert|advanced|veteran)\\b",
       "\\b(sales|solutions?|support|customer|field|forward.deployed)\\s+engineer\\b",
       "\\b(qa|test|quality)\\s+engineer\\b",
       "\\b(hardware|mechanical|electrical|civil|chemical|optical)\\b",

@@ -1055,6 +1055,10 @@ def _selftest_filters(check):
         "title_include": [r"\b(software|backend|platform|infrastructure|ai|ml)\b.*engineer",
                           r"engineer.*\b(backend|platform|infrastructure)\b"],
         "title_exclude": [r"\b(intern|principal|staff|director|manager|vp)\b",
+                          r"\b(senior|snr|sr|lead|distinguished|fellow|architect)\b",
+                          r"\b(engineer|engineering|swe|sde|developer|programmer)"
+                          r"\s*[-,]?\s*(level\s*)?(2|3|4|5|6|ii|iii|iv|v|vi)\b",
+                          r"\b[lt][3-9]\b",
                           r"\bsales\b", r"\bsolutions? engineer\b"],
         "location_include": [r"seattle", r"bellevue", r"redmond", r"remote",
                              r"san francisco", r"bay area", r"new york",
@@ -1080,8 +1084,27 @@ def _selftest_filters(check):
          "wrong discipline"),
         (Job("Acme", "greenhouse", "8", "Platform Engineer", "", "u"), True,
          "blank location surfaces rather than drops"),
-        (Job("Acme", "greenhouse", "9", "Senior Software Engineer", "Berlin", "u"), True,
-         "senior is allowed"),
+        # Seniority. The poller only ever sees the title, never the description,
+        # so years-of-experience is invisible to it. These patterns catch the
+        # explicit level markers, which is as far as title-only filtering goes.
+        (Job("Acme", "greenhouse", "9", "Senior Software Engineer", "Berlin", "u"), False,
+         "senior excluded"),
+        (Job("Acme", "greenhouse", "10", "Sr. Software Engineer", "Seattle", "u"), False,
+         "abbreviated Sr. excluded"),
+        (Job("Acme", "greenhouse", "11", "Lead Backend Engineer", "Remote", "u"), False,
+         "lead excluded"),
+        (Job("Acme", "greenhouse", "12", "Software Engineer III", "Seattle", "u"), False,
+         "roman numeral level excluded"),
+        (Job("Acme", "greenhouse", "13", "Software Engineer 3", "Remote", "u"), False,
+         "numeric level excluded"),
+        (Job("Acme", "greenhouse", "14", "Backend Engineer, L5", "Seattle", "u"), False,
+         "ladder code excluded"),
+        (Job("Acme", "greenhouse", "15", "Software Engineer I", "Seattle", "u"), True,
+         "level I survives — that is the level being hunted"),
+        (Job("Acme", "greenhouse", "16", "Software Engineer, New Grad", "Remote", "u"), True,
+         "new grad survives"),
+        (Job("Acme", "greenhouse", "17", "Software Engineer", "Seattle", "u"), True,
+         "unlevelled title survives — the title cannot reveal its YOE bar"),
     ]
 
     for job, expected, desc in cases:
