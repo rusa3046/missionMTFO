@@ -9,7 +9,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Offline logic tests (no network)
-        run: python3 poller.py --selftest
+        run: |
+          python3 poller.py --selftest
+          python3 discover.py --selftest
       - name: Config parses and is structurally valid
         run: |
           python3 - <<'PY'

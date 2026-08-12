@@ -72,6 +72,16 @@ class NetStats:
 
 NET = NetStats()
 
+# Workday instance labels. A tenant lives on exactly one of these and the label
+# is not derivable from the company: Capital One is wd12, Expedia is wd108.
+#
+# This list is a shortcut, not a solution — it can never be complete, and wd108
+# was only found by reading the careers page. When a Workday entry will not
+# resolve, --inspect on the company's careers URL is the reliable answer; this
+# sweep just saves a round trip when the instance happens to be a common one.
+WORKDAY_INSTANCES = ["wd1", "wd2", "wd3", "wd5", "wd10", "wd12", "wd101",
+                     "wd103", "wd105", "wd108"]
+
 # Site-path segments that Workday tenants overwhelmingly use, most common first.
 WORKDAY_SITES = [
     "External", "external", "EXTERNAL_CAREERS", "External_Career_Site",
@@ -105,6 +115,9 @@ def probe(url, method="GET", body=None):
         raise ProbeError("%s: %s" % (type(e).__name__, e))
     NET.answered += 1
     return payload
+
+
+_REAL_PROBE = probe
 
 
 def slug_candidates(name):
@@ -306,6 +319,39 @@ def apply_edits(text, edits):
     return text
 
 
+def validate_config(text, before):
+    """
+    Structural check on repaired config text. Returns a problem string, or None.
+
+    Runs before anything is written. Relying on a downstream CI workflow to catch
+    a broken config does not work here: pushes made with the default GITHUB_TOKEN
+    never trigger workflows, so the validation has to happen in this process.
+    """
+    try:
+        after = json.loads(text)
+    except ValueError as e:
+        return "result is not valid JSON: %s" % e
+
+    old_names = [e["company"] for e in before["companies"]]
+    new_names = [e["company"] for e in after.get("companies", [])]
+    if new_names != old_names:
+        return ("company list changed (%d -> %d entries)"
+                % (len(old_names), len(new_names)))
+    if after.get("filters") != before.get("filters"):
+        return "filters block was modified"
+
+    for entry in after["companies"]:
+        if entry.get("disabled"):
+            continue
+        if entry["ats"] == "workday":
+            missing = [k for k in ("host", "tenant", "site") if not entry.get(k)]
+            if missing:
+                return "%s is missing %s" % (entry["company"], ", ".join(missing))
+        elif not entry.get("token"):
+            return "%s has no token" % entry["company"]
+    return None
+
+
 def _entry_works(entry):
     """True/False if we got an answer, None if we never reached the endpoint."""
     try:
@@ -325,11 +371,231 @@ def _entry_works(entry):
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# --inspect: what is this careers page actually running?
+#
+# Four of the "broken tokens" in this repo turned out to be the wrong ATS
+# entirely — Zillow was on Workday, not Greenhouse; Honeywell on Oracle, not
+# Workday. Guessing slugs cannot find those. Reading the page can.
+# ─────────────────────────────────────────────────────────────────────────────
+
+INSPECT_UA = ("Mozilla/5.0 (compatible; job-poller-discovery/1.0; "
+              "personal job search)")
+INSPECT_MAX_BYTES = 2_000_000
+
+WORKDAY_URL = re.compile(
+    r"https?://([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)(?:/[A-Za-z]{2}-[A-Za-z]{2})?/([A-Za-z0-9_-]+)")
+WORKDAY_CXS = re.compile(r"/wday/cxs/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/jobs")
+ORACLE_URL = re.compile(
+    r"https?://([a-z0-9-]+\.fa\.[a-z0-9]+\.oraclecloud\.com)"
+    r"/hcmUI/CandidateExperience/[^/]+/sites/([A-Za-z0-9_-]+)")
+
+SIMPLE_FINGERPRINTS = [
+    ("greenhouse", re.compile(
+        r"(?:boards-api|job-boards|boards)\.greenhouse\.io/(?:v1/boards/)?([A-Za-z0-9_-]+)")),
+    ("greenhouse", re.compile(r"greenhouse\.io/embed/job_board\?for=([A-Za-z0-9_-]+)")),
+    ("lever", re.compile(r"(?:jobs\.lever\.co|api\.lever\.co/v0/postings)/([A-Za-z0-9_-]+)")),
+    ("ashby", re.compile(
+        r"(?:jobs\.ashbyhq\.com|api\.ashbyhq\.com/posting-api/job-board)/([A-Za-z0-9_.-]+)")),
+    ("smartrecruiters", re.compile(
+        r"(?:jobs\.smartrecruiters\.com|api\.smartrecruiters\.com/v1/companies)/([A-Za-z0-9_-]+)")),
+]
+
+# Slugs that are really path fragments, not board identifiers.
+SLUG_NOISE = {"v1", "embed", "job_board", "jobs", "static", "assets", "api",
+              "posting-api", "boards", "en", "en-US", "images", "css", "js"}
+
+# Platforms with no public JSON board API. Recognising one is a real answer:
+# it means "stop hunting for a token, disable this entry".
+CUSTOM_PLATFORMS = [
+    ("Phenom People", re.compile(r"phenompeople\.com|phenom\.com", re.I)),
+    ("Radancy / TalentBrew", re.compile(r"radancy\.com|talentbrew", re.I)),
+    ("Eightfold", re.compile(r"eightfold\.ai", re.I)),
+    ("iCIMS", re.compile(r"icims\.com", re.I)),
+    ("Taleo", re.compile(r"taleo\.net", re.I)),
+    ("SAP SuccessFactors", re.compile(r"successfactors\.com|sapsf\.com", re.I)),
+    ("Workable", re.compile(r"apply\.workable\.com", re.I)),
+    ("Jobvite", re.compile(r"jobvite\.com", re.I)),
+    ("Teamtailor", re.compile(r"teamtailor\.com", re.I)),
+    ("Recruitee", re.compile(r"recruitee\.com", re.I)),
+    ("Personio", re.compile(r"jobs\.personio\.(?:de|com)", re.I)),
+]
+
+
+def fetch_page(url):
+    """GET a page as text, following redirects. Returns (status, final_url, body)."""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": INSPECT_UA,
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            raw = r.read(INSPECT_MAX_BYTES)
+            charset = r.headers.get_content_charset() or "utf-8"
+            return r.status, r.geturl(), raw.decode(charset, errors="replace")
+    except urllib.error.HTTPError as e:
+        # A 403 or 404 page still often names its ATS in a script tag.
+        try:
+            body = e.read(INSPECT_MAX_BYTES).decode("utf-8", errors="replace")
+        except Exception:                                        # noqa: BLE001
+            body = ""
+        return e.code, url, body
+    except Exception as e:                                       # noqa: BLE001
+        raise ProbeError("%s: %s" % (type(e).__name__, e))
+
+
+def detect_ats(final_url, body):
+    """Find every ATS fingerprint in a URL plus page source. Best guess first."""
+    hay = final_url + "\n" + body
+    found = []
+
+    # Workday: the /wday/cxs/ form is authoritative because it names the tenant.
+    for tenant, site in WORKDAY_CXS.findall(hay):
+        host = ""
+        m = re.search(r"https?://([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)", hay)
+        if m:
+            host = m.group(1)
+        found.append(("workday", {"host": host, "tenant": tenant, "site": site}))
+    for host, site in WORKDAY_URL.findall(hay):
+        found.append(("workday", {"host": host, "tenant": host.split(".")[0],
+                                  "site": site}))
+
+    for host, site in ORACLE_URL.findall(hay):
+        found.append(("oracle", {"host": host, "site": site}))
+
+    for ats, pattern in SIMPLE_FINGERPRINTS:
+        for slug in pattern.findall(hay):
+            if slug and slug not in SLUG_NOISE:
+                found.append((ats, {"token": slug}))
+
+    seen, unique = set(), []
+    for ats, fields in found:
+        key = (ats, tuple(sorted(fields.items())))
+        if key not in seen:
+            seen.add(key)
+            unique.append((ats, fields))
+    return unique
+
+
+def config_line(ats, fields):
+    """A ready-to-paste companies.json entry for what was detected."""
+    entry = {"tier": 3, "company": "REPLACE_ME", "ats": ats}
+    entry.update(fields)
+    if ats == "workday":
+        entry["search_text"] = "software engineer"
+    entry["verified"] = False
+    return json.dumps(entry)
+
+
+def cmd_inspect(urls):
+    """Report what ATS each careers URL is actually running."""
+    print("Inspecting %d URL(s). Following redirects; reading page source.\n" % len(urls))
+    unknown = 0
+
+    for url in urls:
+        print("=" * 72)
+        print(url)
+        try:
+            status, final_url, body = fetch_page(url)
+        except ProbeError as e:
+            print("  UNREACHABLE  %s" % e)
+            unknown += 1
+            continue
+
+        if final_url != url:
+            print("  redirected -> %s" % final_url)
+        print("  HTTP %s, %d bytes of source" % (status, len(body)))
+
+        hits = detect_ats(final_url, body)
+        if hits:
+            for ats, fields in hits:
+                if ats == "oracle":
+                    print("  ORACLE    Oracle Recruiting Cloud  host=%s site=%s"
+                          % (fields["host"], fields["site"]))
+                    print("            No adapter for this ATS yet.")
+                else:
+                    print("  DETECTED  %-16s %s"
+                          % (ats, " ".join("%s=%s" % kv for kv in fields.items())))
+                    print("            %s" % config_line(ats, fields))
+            continue
+
+        platform = next((n for n, p in CUSTOM_PLATFORMS if p.search(body)), None)
+        if platform:
+            print("  PLATFORM  %s — no public JSON board API." % platform)
+            print('            Mark this company "disabled": true.')
+        else:
+            print("  NOTHING   no known ATS fingerprint in the source.")
+            print("            The board is probably rendered by JavaScript. Click "
+                  "into a single posting and inspect that URL instead.")
+            unknown += 1
+        time.sleep(DELAY)
+
+    print("\n%d of %d URL(s) could not be identified." % (unknown, len(urls)))
+    return 0
+
+
+def workday_host_candidates(host, tenant):
+    """The configured host first, then every plausible instance for this tenant."""
+    cands = [host] if host else []
+    for inst in WORKDAY_INSTANCES:
+        cands.append("%s.%s.myworkdayjobs.com" % (tenant, inst))
+    return list(dict.fromkeys(c for c in cands if c))
+
+
+def discover_workday_host(host, tenant, site=None):
+    """
+    Find which instance actually hosts this tenant.
+
+    Two mistakes an earlier version of this made, both caught by real data:
+
+    It probed only the site 'External'. Capital One's site was already correct
+    ('Capital_One') and only the instance was wrong, so the right host was
+    tested with the wrong site and discarded. Every candidate host is now tried
+    with the CONFIGURED site first, then 'External'.
+
+    It returned at the first 422. Workday answers 422 for an unknown tenant as
+    well as an unknown site, so a 422 from the misconfigured host looked like
+    proof the tenant lived there — and the search stopped one instance short of
+    the truth. A 422 is now remembered as a weak signal and used only after
+    every candidate has been tried.
+
+    Returns (host, site_or_None, status): "ok", "site-unknown", "auth", "none".
+    """
+    trials = [s for s in (site, "External") if s]
+    body = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": ""}
+    weak = None                      # answered 422: tenant *might* live here
+
+    for candidate in workday_host_candidates(host, tenant):
+        for trial in dict.fromkeys(trials):
+            url = "https://%s/wday/cxs/%s/%s/jobs" % (candidate, tenant, trial)
+            try:
+                payload = probe(url, method="POST", body=body)
+                if payload.get("jobPostings"):
+                    print("  HOST  %s site=%r works" % (candidate, trial))
+                    return candidate, trial, "ok"
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    print("  AUTH  %s requires authentication — not publicly "
+                          "pollable" % candidate)
+                    return candidate, None, "auth"
+                if e.code == 422 and weak is None:
+                    weak = candidate
+            except ProbeError:
+                break                # host does not resolve; skip its other trials
+            time.sleep(DELAY)
+
+    if weak:
+        print("  host  %s answered 422 — tenant may live here, site unknown" % weak)
+        return weak, None, "site-unknown"
+    return None, None, "none"
+
+
 def cmd_fix_config(dry_run=False, allow_ats_switch=False):
     """Walk companies.json, retry every entry, and repair what resolves."""
     original = CONFIG_PATH.read_text()
     cfg = json.loads(original)
-    edits, unresolved, suggestions, inconclusive = [], [], [], []
+    edits, unresolved, suggestions, inconclusive, private = [], [], [], [], []
 
     for entry in cfg["companies"]:
         if entry.get("disabled"):
@@ -347,12 +613,29 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         print("\n=== %s (%s) ===" % (name, ats))
 
         if ats == "workday":
-            hits = discover_workday(entry["host"], entry["tenant"])
-            if hits:
-                edits.append((name, {"site": hits[0]["site"], "verified": True}))
-                print("  FIX   site -> %r" % hits[0]["site"])
-            else:
+            host, site, status = discover_workday_host(
+                entry.get("host"), entry["tenant"], entry.get("site"))
+            if status == "auth":
+                private.append(name)
+                continue
+            if status == "none":
                 unresolved.append(name)
+                continue
+
+            if site is None:
+                hits = discover_workday(host, entry["tenant"])
+                site = hits[0]["site"] if hits else None
+            if site is None:
+                unresolved.append(name)
+                continue
+
+            fields = {"site": site, "verified": True}
+            if host != entry.get("host"):
+                fields["host"] = host
+                print("  FIX   host -> %r, site -> %r" % (host, site))
+            else:
+                print("  FIX   site -> %r" % site)
+            edits.append((name, fields))
             continue
 
         # Same-ATS repair first: this only ever rewrites `token`.
@@ -394,10 +677,19 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         return 2
 
     if edits and not dry_run:
+        repaired = apply_edits(original, edits)
+        problem = validate_config(repaired, cfg)
+        if problem:
+            print("\n" + "=" * 70)
+            print("REFUSED TO WRITE — the repaired config failed validation:")
+            print("  %s" % problem)
+            print("companies.json is unchanged.")
+            print("=" * 70)
+            return 3
         CONFIG_PATH.with_suffix(".json.bak").write_text(original)
-        CONFIG_PATH.write_text(apply_edits(original, edits))
-        print("\nWrote %d repair(s) to companies.json (backup: companies.json.bak)"
-              % len(edits))
+        CONFIG_PATH.write_text(repaired)
+        print("\nWrote %d repair(s) to companies.json, validated "
+              "(backup: companies.json.bak)" % len(edits))
     elif edits:
         print("\n--dry-run: %d repair(s) NOT written:" % len(edits))
     else:
@@ -412,6 +704,14 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
         for name, was, best in suggestions:
             print("  %-22s %s -> %s/%s (%d postings)"
                   % (name, was, best["ats"], best["token"], best["count"]))
+
+    if private:
+        phrase = ("company exists but requires" if len(private) == 1
+                  else "companies exist but require")
+        print("\n%d %s authentication (HTTP 401). No token will ever fix that — "
+              'mark them "disabled": true:' % (len(private), phrase))
+        for name in private:
+            print("  %s" % name)
 
     if inconclusive:
         print("\n%d compan%s untested (endpoint unreachable): %s"
@@ -429,6 +729,179 @@ def cmd_fix_config(dry_run=False, allow_ats_switch=False):
     return 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Offline self-test — no network, no writes outside a temp directory.
+#
+# Every case below is a regression for a bug this file actually shipped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SELFTEST_CONFIG = '''{
+  "_README": "synthetic fixture",
+  "filters": {"title_include": ["engineer"], "title_exclude": []},
+  "companies": [
+    {"tier": 1, "company": "Acme",        "ats": "greenhouse", "token": "acme",     "verified": false},
+    {"tier": 2, "company": "Trade Test",  "ats": "greenhouse", "token": "wrongtok", "verified": false},
+    {"tier": 2, "company": "Switcheroo",  "ats": "greenhouse", "token": "nope",     "verified": false},
+    {"tier": 3, "company": "Wanderer",    "ats": "workday", "host": "wanderer.wd1.myworkdayjobs.com", "tenant": "wanderer", "site": "Careers", "verified": false, "search_text": "engineer"}
+  ]
+}
+'''
+
+
+def cmd_selftest():
+    import tempfile
+
+    print("Running offline self-test (no network)...\n")
+    failed = [0]
+
+    def check(desc, ok, detail=""):
+        if not ok:
+            failed[0] += 1
+        print("  %s %s%s" % ("ok  " if ok else "FAIL", desc,
+                             ("   <- " + detail) if detail and not ok else ""))
+
+    global CONFIG_PATH, DELAY, NET
+    original_path, original_delay = CONFIG_PATH, DELAY
+    tmp = tempfile.mkdtemp(prefix="discover-selftest-")
+    CONFIG_PATH = Path(tmp) / "companies.json"
+    DELAY = 0.0
+
+    def reset():
+        global NET
+        CONFIG_PATH.write_text(SELFTEST_CONFIG)
+        NET = NetStats()
+
+    def entry(name):
+        return {e["company"]: e for e in
+                json.loads(CONFIG_PATH.read_text())["companies"]}[name]
+
+    try:
+        print("ats fingerprints")
+        h = detect_ats("https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External", "")
+        check("workday board url without a locale",
+              ("workday", {"host": "zillow.wd5.myworkdayjobs.com",
+                           "tenant": "zillow", "site": "Zillow_Group_External"}) in h, str(h))
+        h = detect_ats("https://co.wd12.myworkdayjobs.com/en-US/Capital_One", "")
+        check("workday board url with a locale",
+              any(f.get("site") == "Capital_One" for _, f in h), str(h))
+        h = detect_ats("https://x", 'fetch("https://a.wd1.myworkdayjobs.com/wday/cxs/acmecorp/Careers/jobs")')
+        check("cxs path yields the authoritative tenant",
+              any(f.get("tenant") == "acmecorp" for _, f in h), str(h))
+        h = detect_ats("https://ibqbjb.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Honeywell/jobs", "")
+        check("oracle recruiting cloud",
+              ("oracle", {"host": "ibqbjb.fa.ocs.oraclecloud.com", "site": "Honeywell"}) in h, str(h))
+        check("greenhouse api url",
+              ("greenhouse", {"token": "acmeco"}) in
+              detect_ats("https://x", "boards-api.greenhouse.io/v1/boards/acmeco/jobs"))
+        check("greenhouse embed form",
+              ("greenhouse", {"token": "acmeco"}) in
+              detect_ats("https://x", "greenhouse.io/embed/job_board?for=acmeco"))
+        check("ashby slug containing a dot",
+              ("ashby", {"token": "perplexity.ai"}) in
+              detect_ats("https://x", "https://jobs.ashbyhq.com/perplexity.ai"))
+        check("lever", ("lever", {"token": "acme-inc"}) in
+              detect_ats("https://x", "https://jobs.lever.co/acme-inc/abc"))
+        check("smartrecruiters", ("smartrecruiters", {"token": "Revolut"}) in
+              detect_ats("https://x", "api.smartrecruiters.com/v1/companies/Revolut/postings"))
+        check("path fragments are not treated as slugs",
+              detect_ats("https://x", "boards.greenhouse.io/embed/job_board") == [])
+        check("a page with no ats yields nothing",
+              detect_ats("https://x", "<html>nothing here</html>") == [])
+        check("config line is valid json with workday fields",
+              json.loads(config_line("workday", {"host": "h", "tenant": "t", "site": "s"}))["search_text"] == "software engineer")
+
+        print("\nworkday host search")
+        # Regression: probing only 'External' missed a host whose configured
+        # site was already correct (Capital One, wd12/Capital_One).
+        def stub_capone(url, method="GET", body=None):
+            NET.answered += 1
+            if "co.wd12.myworkdayjobs.com/wday/cxs/co/Capital_One/jobs" in url:
+                return {"jobPostings": [{"t": 1}], "total": 400}
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, None)
+        globals()["probe"] = stub_capone
+        reset()
+        check("searches past a 422 and uses the configured site",
+              discover_workday_host("co.wd1.myworkdayjobs.com", "co", "Capital_One")
+              == ("co.wd12.myworkdayjobs.com", "Capital_One", "ok"))
+
+        def stub_all_422(url, method="GET", body=None):
+            NET.answered += 1
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, None)
+        globals()["probe"] = stub_all_422
+        check("422 everywhere reports site-unknown, never a false hit",
+              discover_workday_host("a.wd1.myworkdayjobs.com", "a", "S")[1:] == (None, "site-unknown"))
+
+        def stub_401(url, method="GET", body=None):
+            NET.answered += 1
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        globals()["probe"] = stub_401
+        check("401 is reported as private, not retried forever",
+              discover_workday_host("d.wd5.myworkdayjobs.com", "d", "S")[2] == "auth")
+
+        print("\nconfig repair")
+        def stub_repair(url, method="GET", body=None):
+            NET.answered += 1
+            if url == "https://boards-api.greenhouse.io/v1/boards/trade-test/jobs":
+                return {"jobs": [{"id": 1}] * 7}
+            if url == "https://api.ashbyhq.com/posting-api/job-board/switcheroo":
+                return {"jobs": [{"id": 1}] * 99}
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        globals()["probe"] = stub_repair
+
+        reset()
+        before = CONFIG_PATH.read_text()
+        cmd_fix_config()
+        after = CONFIG_PATH.read_text()
+        check("same-ats token repaired", entry("Trade Test")["token"] == "trade-test",
+              repr(entry("Trade Test").get("token")))
+        check("repaired entry marked verified", entry("Trade Test")["verified"] is True)
+        check("line count preserved",
+              len(before.splitlines()) == len(after.splitlines()))
+        check("only the repaired line differs",
+              sum(1 for a, b in zip(before.splitlines(), after.splitlines()) if a != b) == 1)
+        check("working entries untouched", entry("Acme")["verified"] is False)
+        check("ats never switched without consent", entry("Switcheroo")["ats"] == "greenhouse")
+
+        reset()
+        cmd_fix_config(allow_ats_switch=True)
+        check("--allow-ats-switch does switch", entry("Switcheroo")["ats"] == "ashby")
+
+        reset()
+        cmd_fix_config(dry_run=True)
+        check("--dry-run writes nothing", CONFIG_PATH.read_text() == SELFTEST_CONFIG)
+
+        print("\nrefusing to write bad data")
+        good = json.loads(SELFTEST_CONFIG)
+        check("rejects a dropped entry", validate_config(
+            json.dumps({"filters": good["filters"],
+                        "companies": good["companies"][:-1]}), good) is not None)
+        check("rejects modified filters", validate_config(
+            json.dumps({"filters": {}, "companies": good["companies"]}), good) is not None)
+        check("rejects invalid json", validate_config("{nope", good) is not None)
+        check("accepts an untouched config",
+              validate_config(SELFTEST_CONFIG, good) is None)
+
+        print("\ndead network")
+        def stub_offline(url, method="GET", body=None):
+            NET.failed += 1
+            raise ProbeError("URLError: tunnel blocked")
+        globals()["probe"] = stub_offline
+        reset()
+        rc = cmd_fix_config()
+        check("aborts with exit 2 instead of condemning every board", rc == 2, "rc=%s" % rc)
+        check("config untouched after an aborted run",
+              CONFIG_PATH.read_text() == SELFTEST_CONFIG)
+    finally:
+        globals()["probe"] = _REAL_PROBE
+        CONFIG_PATH, DELAY = original_path, original_delay
+        for leftover in Path(tmp).glob("*"):
+            leftover.unlink()
+        Path(tmp).rmdir()
+
+    print("\n%s" % ("ALL PASSED" if failed[0] == 0 else "%d FAILED" % failed[0]))
+    return 0 if failed[0] == 0 else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("company", nargs="?", help="company name to search for")
@@ -443,8 +916,16 @@ def main():
     ap.add_argument("--allow-ats-switch", action="store_true",
                     help="with --fix-config: permit moving a company between ATSes "
                          "(off by default — a generic slug can match the wrong company)")
+    ap.add_argument("--inspect", nargs="+", metavar="URL",
+                    help="read careers pages and report which ATS each one runs")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline logic tests, no network")
     a = ap.parse_args()
 
+    if a.selftest:
+        return cmd_selftest()
+    if a.inspect:
+        return cmd_inspect(a.inspect)
     if a.fix_config:
         return cmd_fix_config(dry_run=a.dry_run, allow_ats_switch=a.allow_ats_switch)
     if a.workday:

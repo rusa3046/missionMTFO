@@ -75,11 +75,39 @@ which has a **mode** dropdown:
 
 ```
 verify      → tests every entry against its live endpoint, reports what's broken
+inspect     → reads careers pages and reports which ATS each one actually runs
 fix-tokens  → runs discover.py --fix-config and commits the repaired companies.json
 seed        → records everything currently posted WITHOUT emailing you
 health      → exits nonzero if >30% of enabled companies are erroring
 digest      → the real thing (this is what the 7am schedule runs)
 ```
+
+### inspect: when the token isn't the problem
+
+Repeatedly, an entry that looked like a bad token was on the **wrong ATS entirely** —
+Zillow was on Workday not Greenhouse, Honeywell on Oracle not Workday. No amount of slug
+guessing finds those, because the guesser is asking the wrong endpoint.
+
+Paste careers URLs into the **urls** input (space-separated) and run **inspect**. It
+follows redirects, reads the page source, and reports the fingerprint plus a ready-to-paste
+config line:
+
+```
+DETECTED  workday   host=zillow.wd5.myworkdayjobs.com tenant=zillow site=Zillow_Group_External
+          {"tier": 3, "company": "REPLACE_ME", "ats": "workday", "host": "...", ...}
+```
+
+It recognises Greenhouse, Lever, Ashby, SmartRecruiters, Workday (both the board URL and
+the authoritative `/wday/cxs/TENANT/SITE/` path) and Oracle Recruiting Cloud. It also
+recognises platforms with **no** public API — Phenom, Radancy, Eightfold, iCIMS, Taleo,
+SuccessFactors and friends — and says so, which is a real answer: stop hunting, mark that
+company `"disabled": true`.
+
+`NOTHING` means the board is rendered by JavaScript and the fingerprint isn't in the served
+HTML. Click into a single job posting and inspect *that* URL instead — it usually lands on
+the real ATS host.
+
+This mode writes nothing and commits nothing.
 
 1. Run **verify**. It exits nonzero whenever anything needs fixing, so **a red X here is
    the command working**, not the workflow breaking — read the FAIL/WARN list.
@@ -94,9 +122,13 @@ digest      → the real thing (this is what the 7am schedule runs)
 
 ### What fix-tokens can and can't repair
 
-**Workday 422s are the easy win.** 422 means the tenant exists but the site segment is
-wrong, and `discover.py` enumerates ~25 known segments (`External`, `EXTERNAL_CAREERS`,
-`{tenant}careers`, …) until one answers. Most 422s fall to this.
+**Workday needs the instance right before the site matters.** A tenant lives on exactly
+one instance — `wd1`, `wd5`, `wd12` — and the label isn't derivable from the company name.
+Get it wrong and every site probe fails, which is why the first `fix-tokens` run repaired
+none of the nine Workday entries. `discover.py` now probes each candidate instance once
+and reads the status code: **200** means done, **422** means the tenant is there and only
+the site segment is wrong (then it enumerates ~25 known segments), **401** means the board
+is private and no token will ever fix it, **404** means try the next instance.
 
 **404s depend on the slug being guessable from the company name.** Candidates come from
 `slug_candidates()`, which only squashes and hyphenates words: `Trade Republic` yields
@@ -116,8 +148,17 @@ Three safety properties, each learned from a way this can go wrong:
   generic slug can match an unrelated company's board. Without it, cross-ATS matches are
   reported as suggestions and left unapplied.
 
-A `fix-tokens` commit deliberately does **not** carry `[skip ci]` — a config change should
-be re-validated by `selftest.yml`. Only the daily state commits skip CI.
+### Nothing this job commits is checked by CI
+
+Pushes made with the default `GITHUB_TOKEN` **never trigger workflows** — GitHub suppresses
+that to prevent recursion. So `selftest.yml` does not run on the `chore:` commits this job
+creates, no matter what the commit message says.
+
+Validation therefore happens **in the job, before the commit**: the workflow runs
+`--selftest` plus a structural check of `companies.json` and `seen.db`, and the commit step
+is skipped entirely if that fails. `discover.py` independently validates its own output and
+refuses to write (exit 3) if a repair would drop an entry, alter the filters, or produce
+invalid JSON.
 
 ---
 
