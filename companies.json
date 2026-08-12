@@ -75,7 +75,7 @@
     {"tier": "2B", "company": "JPMorgan Chase", "ats": "workday", "disabled": true, "verified": false, "notes": "Runs Oracle Recruiting Cloud, not Workday. Track via HiringCafe."},
 
     {"tier": 3, "company": "Expedia",        "ats": "workday", "host": "expedia.wd5.myworkdayjobs.com", "tenant": "expedia", "site": "search", "verified": false, "search_text": "software engineer"},
-    {"tier": 3, "company": "Zillow",         "ats": "greenhouse",      "token": "zillowgroup",   "verified": false},
+    {"tier": 3, "company": "Zillow",         "ats": "workday", "host": "zillow.wd5.myworkdayjobs.com", "tenant": "zillow", "site": "Zillow_Group_External", "verified": true, "search_text": "software engineer"},
     {"tier": 3, "company": "Smartsheet",     "ats": "greenhouse",      "token": "smartsheet",    "verified": false},
     {"tier": 3, "company": "Remitly",        "ats": "greenhouse",      "token": "remitly",       "verified": false, "notes": "Seattle + payments. Arguably Tier 2 for you."},
     {"tier": 3, "company": "Chime",          "ats": "greenhouse",      "token": "chime",         "verified": false},
