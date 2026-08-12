@@ -66,7 +66,7 @@
     {"tier": "2B", "company": "UnitedHealth/Optum", "ats": "workday", "host": "uhg.wd5.myworkdayjobs.com", "tenant": "uhg", "site": "UnitedHealthGroup", "verified": false, "search_text": "software engineer"},
     {"tier": "2B", "company": "Disney", "ats": "workday", "host": "disney.wd5.myworkdayjobs.com", "tenant": "disney", "site": "disneycareer", "verified": false, "search_text": "software engineer"},
     {"tier": "2B", "company": "Starbucks", "ats": "workday", "host": "starbucks.wd1.myworkdayjobs.com", "tenant": "starbucks", "site": "External", "verified": false, "search_text": "engineer"},
-    {"tier": "2B", "company": "Nike", "ats": "workday", "host": "nike.wd1.myworkdayjobs.com", "tenant": "nike", "site": "nikecareers", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "Nike", "ats": "workday", "host": "nike.wd1.myworkdayjobs.com", "tenant": "nike", "site": "nke", "verified": true, "search_text": "software engineer"},
     {"tier": "2B", "company": "John Deere", "ats": "workday", "host": "deere.wd1.myworkdayjobs.com", "tenant": "deere", "site": "Deere_Careers", "verified": false, "search_text": "software engineer"},
     {"tier": "2B", "company": "Honeywell", "ats": "workday", "host": "honeywell.wd1.myworkdayjobs.com", "tenant": "honeywell", "site": "External", "verified": false, "search_text": "software engineer"},
     {"tier": "2B", "company": "GE Aerospace", "ats": "workday", "host": "geaerospace.wd5.myworkdayjobs.com", "tenant": "geaerospace", "site": "External", "verified": false, "search_text": "software engineer", "notes": "Many roles are ITAR-gated: US citizenship, not just work auth."},
