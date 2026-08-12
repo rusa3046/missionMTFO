@@ -1,0 +1,88 @@
+{
+  "_README": "Every token below is a HYPOTHESIS, not verified data. Run `python3 poller.py --verify` before seeding. See README.md 'Finding the right token' for the 30-second fix on any FAIL.",
+
+  "filters": {
+    "title_include": [
+      "\\b(software|backend|platform|infrastructure|systems|api|data|ai|ml|machine learning)\\b.{0,30}\\bengineer\\b",
+      "\\bengineer\\b.{0,30}\\b(backend|platform|infrastructure|payments|api)\\b",
+      "\\b(swe|sde)\\b",
+      "developer productivity",
+      "developer experience"
+    ],
+    "title_exclude": [
+      "\\b(intern|internship|apprentice|co-?op)\\b",
+      "\\b(staff|principal|distinguished|fellow|architect)\\b",
+      "\\b(director|manager|head of|vp|vice president|lead engineer)\\b",
+      "\\b(sales|solutions?|support|customer|field|forward.deployed)\\s+engineer\\b",
+      "\\b(qa|test|quality)\\s+engineer\\b",
+      "\\b(hardware|mechanical|electrical|civil|chemical|optical)\\b",
+      "\\b(recruiter|designer|analyst|scientist)\\b"
+    ],
+    "location_include": [
+      "seattle", "bellevue", "redmond", "kirkland", "washington",
+      "remote", "san francisco", "bay area", "palo alto", "mountain view", "sunnyvale",
+      "new york", "nyc",
+      "london", "berlin", "munich", "amsterdam", "dublin", "zurich", "paris", "stockholm"
+    ],
+    "location_exclude": [
+      "\\bindia\\b", "bangalore", "bengaluru", "hyderabad", "chennai", "pune", "gurgaon", "noida",
+      "\\bchina\\b", "shanghai", "beijing", "\\bjapan\\b", "tokyo",
+      "\\bbrazil\\b", "são paulo", "sao paulo", "\\bmexico\\b", "guadalajara"
+    ]
+  },
+
+  "companies": [
+    {"tier": 1, "company": "Anthropic",      "ats": "greenhouse",      "token": "anthropic",     "verified": false},
+    {"tier": 1, "company": "OpenAI",         "ats": "ashby",           "token": "openai",        "verified": false},
+    {"tier": 1, "company": "Cursor",         "ats": "ashby",           "token": "anysphere",     "verified": false, "notes": "Anysphere is the legal entity"},
+    {"tier": 1, "company": "Sierra",         "ats": "ashby",           "token": "sierra",        "verified": false},
+    {"tier": 1, "company": "Harvey",         "ats": "ashby",           "token": "harvey",        "verified": false},
+    {"tier": 1, "company": "Perplexity",     "ats": "greenhouse",      "token": "perplexityai",  "verified": false},
+    {"tier": 1, "company": "Cognition",      "ats": "ashby",           "token": "cognition",     "verified": false},
+    {"tier": 1, "company": "Netflix",        "ats": "workday",         "disabled": true,         "verified": false, "notes": "Netflix runs Eightfold at explore.jobs.netflix.net, not a supported ATS. Track via HiringCafe."},
+    {"tier": 1, "company": "Google",         "ats": "greenhouse",      "disabled": true,         "verified": false, "notes": "Custom careers site, no public ATS endpoint. Track via HiringCafe + a saved google.com/about/careers search."},
+    {"tier": 1, "company": "Meta",           "ats": "greenhouse",      "disabled": true,         "verified": false, "notes": "Custom careers site. Track via HiringCafe."},
+
+    {"tier": 2, "company": "Stripe",         "ats": "greenhouse",      "token": "stripe",        "verified": false},
+    {"tier": 2, "company": "Databricks",     "ats": "greenhouse",      "token": "databricks",    "verified": false},
+    {"tier": 2, "company": "Figma",          "ats": "greenhouse",      "token": "figma",         "verified": false},
+    {"tier": 2, "company": "Notion",         "ats": "greenhouse",      "token": "notion",        "verified": false},
+    {"tier": 2, "company": "Airtable",       "ats": "greenhouse",      "token": "airtable",      "verified": false},
+    {"tier": 2, "company": "Ramp",           "ats": "ashby",           "token": "ramp",          "verified": false},
+    {"tier": 2, "company": "Rippling",       "ats": "ashby",           "token": "rippling",      "verified": false},
+    {"tier": 2, "company": "Snowflake",      "ats": "greenhouse",      "token": "snowflake",     "verified": false},
+    {"tier": 2, "company": "Monzo",          "ats": "greenhouse",      "token": "monzo",         "verified": false},
+    {"tier": 2, "company": "Adyen",          "ats": "greenhouse",      "token": "adyen",         "verified": false},
+    {"tier": 2, "company": "Trade Republic", "ats": "greenhouse",      "token": "traderepublic", "verified": false},
+    {"tier": 2, "company": "Revolut",        "ats": "smartrecruiters", "token": "Revolut",       "verified": false},
+    {"tier": 2, "company": "Klarna",         "ats": "greenhouse",      "token": "klarna",        "verified": false},
+    {"tier": 2, "company": "Zalando",        "ats": "smartrecruiters", "token": "Zalando",       "verified": false},
+    {"tier": 2, "company": "Delivery Hero",  "ats": "smartrecruiters", "token": "DeliveryHero",  "verified": false},
+    {"tier": 2, "company": "Personio",       "ats": "greenhouse",      "token": "personio",      "verified": false},
+
+    {"tier": "2B", "company": "Capital One", "ats": "workday", "host": "capitalone.wd1.myworkdayjobs.com", "tenant": "capitalone", "site": "Capital_One", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "American Express", "ats": "workday", "host": "aexp.wd1.myworkdayjobs.com", "tenant": "aexp", "site": "AmericanExpress", "verified": false, "search_text": "engineer"},
+    {"tier": "2B", "company": "CVS Health", "ats": "workday", "host": "cvshealth.wd1.myworkdayjobs.com", "tenant": "cvshealth", "site": "CVS_Health_Careers", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "UnitedHealth/Optum", "ats": "workday", "host": "uhg.wd5.myworkdayjobs.com", "tenant": "uhg", "site": "UnitedHealthGroup", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "Disney", "ats": "workday", "host": "disney.wd5.myworkdayjobs.com", "tenant": "disney", "site": "disneycareer", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "Starbucks", "ats": "workday", "host": "starbucks.wd1.myworkdayjobs.com", "tenant": "starbucks", "site": "External", "verified": false, "search_text": "engineer"},
+    {"tier": "2B", "company": "Nike", "ats": "workday", "host": "nike.wd1.myworkdayjobs.com", "tenant": "nike", "site": "nikecareers", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "John Deere", "ats": "workday", "host": "deere.wd1.myworkdayjobs.com", "tenant": "deere", "site": "Deere_Careers", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "Honeywell", "ats": "workday", "host": "honeywell.wd1.myworkdayjobs.com", "tenant": "honeywell", "site": "External", "verified": false, "search_text": "software engineer"},
+    {"tier": "2B", "company": "GE Aerospace", "ats": "workday", "host": "geaerospace.wd5.myworkdayjobs.com", "tenant": "geaerospace", "site": "External", "verified": false, "search_text": "software engineer", "notes": "Many roles are ITAR-gated: US citizenship, not just work auth."},
+    {"tier": "2B", "company": "Boeing", "ats": "workday", "host": "boeing.wd1.myworkdayjobs.com", "tenant": "boeing", "site": "EXTERNAL_CAREERS", "verified": false, "search_text": "software engineer", "notes": "Heavily ITAR-gated. Deprioritize unless US citizen."},
+    {"tier": "2B", "company": "Walmart Global Tech", "ats": "workday", "disabled": true, "verified": false, "notes": "careers.walmart.com is custom. Track via HiringCafe; watch the YOE floor on GenAI roles (often 6+)."},
+    {"tier": "2B", "company": "JPMorgan Chase", "ats": "workday", "disabled": true, "verified": false, "notes": "Runs Oracle Recruiting Cloud, not Workday. Track via HiringCafe."},
+
+    {"tier": 3, "company": "Expedia",        "ats": "workday", "host": "expedia.wd5.myworkdayjobs.com", "tenant": "expedia", "site": "search", "verified": false, "search_text": "software engineer"},
+    {"tier": 3, "company": "Zillow",         "ats": "greenhouse",      "token": "zillowgroup",   "verified": false},
+    {"tier": 3, "company": "Smartsheet",     "ats": "greenhouse",      "token": "smartsheet",    "verified": false},
+    {"tier": 3, "company": "Remitly",        "ats": "greenhouse",      "token": "remitly",       "verified": false, "notes": "Seattle + payments. Arguably Tier 2 for you."},
+    {"tier": 3, "company": "Chime",          "ats": "greenhouse",      "token": "chime",         "verified": false},
+    {"tier": 3, "company": "Affirm",         "ats": "greenhouse",      "token": "affirm",        "verified": false},
+    {"tier": 3, "company": "Marqeta",        "ats": "greenhouse",      "token": "marqeta",       "verified": false},
+    {"tier": 3, "company": "Discover",       "ats": "workday", "host": "discover.wd5.myworkdayjobs.com", "tenant": "discover", "site": "Discover", "verified": false, "search_text": "software engineer"},
+    {"tier": 3, "company": "Fiserv",         "ats": "workday", "host": "fiserv.wd5.myworkdayjobs.com", "tenant": "fiserv", "site": "EXT", "verified": false, "search_text": "software engineer"},
+    {"tier": 3, "company": "Global Payments","ats": "workday", "host": "globalpay.wd5.myworkdayjobs.com", "tenant": "globalpay", "site": "External", "verified": false, "search_text": "software engineer"}
+  ]
+}

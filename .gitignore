@@ -1,0 +1,19 @@
+# Local state — never commit these
+seen.db
+*.db
+matches.jsonl
+poller.log
+companies.json.bak
+
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store

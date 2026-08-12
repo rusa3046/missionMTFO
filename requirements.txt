@@ -1,0 +1,3 @@
+# No dependencies. Standard library only (Python 3.9+).
+# Kept deliberately: this runs unattended for months, and every
+# dependency is a future breakage.
