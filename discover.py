@@ -7,13 +7,30 @@ Usage:
     python3 discover.py "Capital One"                 # try everything
     python3 discover.py "Notion" --ats ashby          # narrow to one ATS
     python3 discover.py --fix-config                  # auto-repair every FAIL in companies.json
+    python3 discover.py --fix-config --dry-run        # report the repairs, write nothing
+    python3 discover.py --fix-config --allow-ats-switch   # let a company move between ATSes
     python3 discover.py --workday capitalone.wd1.myworkdayjobs.com capitalone
 
 Politeness: ~0.4s between probes. A full multi-ATS sweep for one company is ~40 requests.
+
+Three deliberate safety properties, learned the hard way:
+
+  A blocked network is not a finding. Transport failures (DNS, TLS, proxy,
+  timeout) are counted separately from HTTP 404s, and --fix-config aborts
+  without writing if nothing resolved and the network looked broken. Reporting
+  "no such board" when you simply had no connectivity is worse than crashing.
+
+  Your formatting survives. Repairs are applied as targeted edits to the raw
+  text of companies.json, so alignment, comments-by-convention and entry
+  ordering are preserved. Re-serialising the whole file would reformat all 88
+  entries to prove a two-character change.
+
+  A company never changes ATS silently. `token` and `site` are repaired in
+  place; moving a company from Greenhouse to Ashby needs --allow-ats-switch,
+  because a generic slug can match an unrelated company's board.
 """
 
 import argparse
-import itertools
 import json
 import re
 import sys
@@ -28,6 +45,33 @@ UA = "job-poller-discovery/1.0 (personal job search)"
 DELAY = 0.4
 TIMEOUT = 15
 
+
+class ProbeError(Exception):
+    """
+    Transport-level failure: DNS, TLS, proxy refusal, timeout.
+
+    Explicitly NOT "this board does not exist" — that arrives as an HTTPError
+    with a status code. Conflating the two is what makes a discovery tool
+    confidently tell you every company is unreachable when it's your wifi.
+    """
+
+
+class NetStats:
+    """Counts real HTTP answers vs transport failures across a whole sweep."""
+
+    def __init__(self):
+        self.answered = 0     # server replied, any status
+        self.failed = 0       # never got a reply
+
+    def looks_offline(self):
+        return self.answered == 0 and self.failed > 0
+
+    def __str__(self):
+        return "%d answered, %d transport failures" % (self.answered, self.failed)
+
+
+NET = NetStats()
+
 # Site-path segments that Workday tenants overwhelmingly use, most common first.
 WORKDAY_SITES = [
     "External", "external", "EXTERNAL_CAREERS", "External_Career_Site",
@@ -40,14 +84,27 @@ WORKDAY_SITES = [
 
 
 def probe(url, method="GET", body=None):
+    """
+    One request. Raises HTTPError for a real HTTP status, ProbeError if we never
+    reached the server at all. Callers must treat those two very differently.
+    """
     headers = {"User-Agent": UA, "Accept": "application/json"}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return json.loads(r.read().decode("utf-8", errors="replace"))
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            payload = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError:
+        NET.answered += 1      # a 404 is still the server talking to us
+        raise
+    except Exception as e:     # noqa: BLE001 — URLError, socket.timeout, ssl, DNS
+        NET.failed += 1
+        raise ProbeError("%s: %s" % (type(e).__name__, e))
+    NET.answered += 1
+    return payload
 
 
 def slug_candidates(name):
@@ -129,8 +186,10 @@ def discover_simple(name, only_ats=None, extra_slugs=()):
                 except urllib.error.HTTPError as e:
                     if e.code not in (404, 400):
                         print(f"  ?     {ats:<16} token={v!r} HTTP {e.code}")
-                except Exception:                                # noqa: BLE001
-                    pass
+                except ProbeError as e:
+                    # Never silent. This is the difference between "no such
+                    # board" and "we never got out of the building".
+                    print(f"  NET   {ats:<16} token={v!r} unreachable ({e})")
                 time.sleep(DELAY)
     return hits
 
@@ -163,72 +222,210 @@ def discover_workday(host, tenant, sites=None):
                 pass
             else:
                 print(f"  ?     site={site!r} HTTP {e.code}")
-        except Exception:                                        # noqa: BLE001
-            pass
+        except ProbeError as e:
+            print(f"  NET   site={site!r} unreachable ({e})")
         time.sleep(DELAY)
     return hits
 
 
-def cmd_fix_config():
-    """Walk companies.json, retry every entry, and write back what resolves."""
-    cfg = json.loads(CONFIG_PATH.read_text())
-    changed, unresolved = [], []
+# ─────────────────────────────────────────────────────────────────────────────
+# Surgical edits to companies.json
+#
+# The config is hand-formatted: aligned columns, one entry per line, a curated
+# ordering. json.dump() would flatten all of that to prove a two-character
+# change, so repairs are applied to the raw text instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scan_object(text, start):
+    """Index just past the `}` closing the object that opens at `start`."""
+    depth, i, in_string, escaped = 0, start, False, False
+    while i < len(text):
+        c = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def _entry_span(text, company):
+    """(start, end) of the JSON object describing `company`, or None."""
+    m = re.search(r'"company"\s*:\s*"%s"' % re.escape(company), text)
+    if not m:
+        return None
+    start = text.rfind("{", 0, m.start())
+    if start == -1:
+        return None
+    end = _scan_object(text, start)
+    return None if end is None else (start, end)
+
+
+_VALUE = r'"(?:[^"\\]|\\.)*"|true|false|null|-?\d+(?:\.\d+)?'
+
+
+def _set_field(obj_text, key, value):
+    """Set one key inside a single JSON object's raw text, adding it if absent."""
+    literal = json.dumps(value)
+    pattern = re.compile(r'("%s"\s*:\s*)(%s)' % (re.escape(key), _VALUE))
+    if pattern.search(obj_text):
+        return pattern.sub(lambda m: m.group(1) + literal, obj_text, count=1)
+    body = obj_text[:obj_text.rfind("}")].rstrip().rstrip(",")
+    return '%s, "%s": %s}' % (body, key, literal)
+
+
+def apply_edits(text, edits):
+    """
+    edits: [(company, {key: value}), ...]. Applied back-to-front so earlier
+    spans stay valid as the text length changes.
+    """
+    spans = []
+    for company, fields in edits:
+        span = _entry_span(text, company)
+        if span is None:
+            print("  [warn] could not locate %r in the raw config — skipped" % company)
+            continue
+        spans.append((span, fields))
+
+    for (start, end), fields in sorted(spans, key=lambda s: s[0][0], reverse=True):
+        obj = text[start:end]
+        for key, value in fields.items():
+            obj = _set_field(obj, key, value)
+        text = text[:start] + obj + text[end:]
+    return text
+
+
+def _entry_works(entry):
+    """True/False if we got an answer, None if we never reached the endpoint."""
+    try:
+        if entry["ats"] == "workday":
+            url = ("https://%s/wday/cxs/%s/%s/jobs"
+                   % (entry["host"], entry["tenant"], entry["site"]))
+            payload = probe(url, "POST", {"appliedFacets": {}, "limit": 5,
+                                          "offset": 0, "searchText": ""})
+            return bool(payload.get("jobPostings"))
+        fn = SIMPLE.get(entry["ats"])
+        return fn(entry["token"]) > 0 if fn else False
+    except urllib.error.HTTPError:
+        return False
+    except ProbeError:
+        return None
+    except Exception:                                            # noqa: BLE001
+        return False
+
+
+def cmd_fix_config(dry_run=False, allow_ats_switch=False):
+    """Walk companies.json, retry every entry, and repair what resolves."""
+    original = CONFIG_PATH.read_text()
+    cfg = json.loads(original)
+    edits, unresolved, suggestions, inconclusive = [], [], [], []
 
     for entry in cfg["companies"]:
         if entry.get("disabled"):
             continue
         name, ats = entry["company"], entry["ats"]
 
-        # Does it already work?
-        try:
-            if ats == "workday":
-                url = f"https://{entry['host']}/wday/cxs/{entry['tenant']}/{entry['site']}/jobs"
-                d = probe(url, "POST", {"appliedFacets": {}, "limit": 5,
-                                        "offset": 0, "searchText": ""})
-                if d.get("jobPostings"):
-                    continue
-            else:
-                if SIMPLE[ats](entry["token"]) > 0:
-                    continue
-        except Exception:                                        # noqa: BLE001
-            pass
+        state = _entry_works(entry)
+        if state is True:
+            continue
+        if state is None:
+            inconclusive.append(name)
+            print("  [skip] %s — could not reach the endpoint to test it" % name)
+            continue
 
-        print(f"\n=== {name} ({ats}) ===")
+        print("\n=== %s (%s) ===" % (name, ats))
+
         if ats == "workday":
             hits = discover_workday(entry["host"], entry["tenant"])
             if hits:
-                entry["site"] = hits[0]["site"]
-                entry["verified"] = True
-                changed.append((name, f"site -> {hits[0]['site']}"))
+                edits.append((name, {"site": hits[0]["site"], "verified": True}))
+                print("  FIX   site -> %r" % hits[0]["site"])
             else:
                 unresolved.append(name)
-        else:
-            hits = discover_simple(name)
-            if hits:
-                best = max(hits, key=lambda h: h["count"])
-                entry["ats"] = best["ats"]
-                entry["token"] = best["token"]
-                entry.pop("host", None)
-                entry.pop("tenant", None)
-                entry.pop("site", None)
-                entry["verified"] = True
-                changed.append((name, f"{best['ats']}/{best['token']}"))
-            else:
-                unresolved.append(name)
+            continue
 
-    if changed:
-        backup = CONFIG_PATH.with_suffix(".json.bak")
-        backup.write_text(CONFIG_PATH.read_text())
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-        print(f"\nWrote {len(changed)} fixes to companies.json (backup: {backup.name})")
-        for n, w in changed:
-            print(f"  {n}: {w}")
+        # Same-ATS repair first: this only ever rewrites `token`.
+        hits = discover_simple(name, only_ats=ats)
+        if hits:
+            best = max(hits, key=lambda h: h["count"])
+            edits.append((name, {"token": best["token"], "verified": True}))
+            print("  FIX   token -> %r (%d postings)" % (best["token"], best["count"]))
+            continue
+
+        # Nothing on its own ATS. Look elsewhere, but do not act without consent:
+        # a generic slug can easily match an unrelated company's board.
+        others = [a for a in SIMPLE if a != ats]
+        cross = []
+        for other in others:
+            cross.extend(discover_simple(name, only_ats=other))
+        if not cross:
+            unresolved.append(name)
+            continue
+
+        best = max(cross, key=lambda h: h["count"])
+        if allow_ats_switch:
+            edits.append((name, {"ats": best["ats"], "token": best["token"],
+                                 "verified": True}))
+            print("  FIX   %s/%s -> %s/%s"
+                  % (ats, entry.get("token"), best["ats"], best["token"]))
+        else:
+            suggestions.append((name, ats, best))
+            print("  NOTE  found on %s as %r (%d postings) — not applied"
+                  % (best["ats"], best["token"], best["count"]))
+
+    # A sweep that reached nothing proves nothing. Never write on that basis.
+    if NET.looks_offline():
+        print("\n" + "=" * 70)
+        print("ABORTED — no endpoint answered (%s)." % NET)
+        print("This looks like a network/proxy problem, not 44 dead job boards.")
+        print("Nothing was written. Re-run where the ATS hosts are reachable.")
+        print("=" * 70)
+        return 2
+
+    if edits and not dry_run:
+        CONFIG_PATH.with_suffix(".json.bak").write_text(original)
+        CONFIG_PATH.write_text(apply_edits(original, edits))
+        print("\nWrote %d repair(s) to companies.json (backup: companies.json.bak)"
+              % len(edits))
+    elif edits:
+        print("\n--dry-run: %d repair(s) NOT written:" % len(edits))
+    else:
+        print("\nNo repairs to apply.")
+    for name, fields in edits:
+        print("  %s: %s" % (name, ", ".join("%s=%r" % kv for kv in fields.items())))
+
+    if suggestions:
+        print("\n%d compan%s resolved on a DIFFERENT ATS. Review, then re-run with "
+              "--allow-ats-switch to accept:" % (len(suggestions),
+                                                 "y" if len(suggestions) == 1 else "ies"))
+        for name, was, best in suggestions:
+            print("  %-22s %s -> %s/%s (%d postings)"
+                  % (name, was, best["ats"], best["token"], best["count"]))
+
+    if inconclusive:
+        print("\n%d compan%s untested (endpoint unreachable): %s"
+              % (len(inconclusive), "y" if len(inconclusive) == 1 else "ies",
+                 ", ".join(inconclusive)))
 
     if unresolved:
-        print(f"\n{len(unresolved)} still unresolved — these likely use an unsupported ATS:")
-        for n in unresolved:
-            print(f"  {n}")
-        print("Mark them \"disabled\": true and track via HiringCafe.")
+        print("\n%d still unresolved — these likely use an unsupported ATS:"
+              % len(unresolved))
+        for name in unresolved:
+            print("  %s" % name)
+        print('Mark them "disabled": true and track via HiringCafe.')
+
+    print("\nnetwork: %s" % NET)
     return 0
 
 
@@ -241,10 +438,15 @@ def main():
                     help="find the site segment for a known Workday host+tenant")
     ap.add_argument("--fix-config", action="store_true",
                     help="auto-repair every broken entry in companies.json")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --fix-config: report the repairs, write nothing")
+    ap.add_argument("--allow-ats-switch", action="store_true",
+                    help="with --fix-config: permit moving a company between ATSes "
+                         "(off by default — a generic slug can match the wrong company)")
     a = ap.parse_args()
 
     if a.fix_config:
-        return cmd_fix_config()
+        return cmd_fix_config(dry_run=a.dry_run, allow_ats_switch=a.allow_ats_switch)
     if a.workday:
         host, tenant = a.workday
         print(f"Probing Workday sites for {tenant} @ {host}...\n")
