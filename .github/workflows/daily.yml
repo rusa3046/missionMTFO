@@ -25,7 +25,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  digest:
+  # Named for what it is, not for one of its modes: the run history shows this
+  # job name regardless of which mode you dispatched, so "digest" here was
+  # actively misleading when you ran verify.
+  poll:
     runs-on: ubuntu-latest
     # A hung ATS endpoint must not burn the monthly Actions budget. The poller's
     # own per-request timeouts should fire long before this does.
@@ -63,7 +66,7 @@ jobs:
               fh.write("run=%s\n" % ("true" if run else "false"))
           PY
 
-      - name: Poll and send digest
+      - name: Run poller — mode:${{ inputs.mode || 'digest' }}
         if: steps.guard.outputs.run == 'true'
         env:
           SMTP_HOST:  ${{ secrets.SMTP_HOST }}
@@ -79,10 +82,27 @@ jobs:
         run: |
           set -o pipefail
           case "$MODE" in
-            seed)   python3 poller.py --seed   ;;
-            verify) python3 poller.py --verify ;;
-            health) python3 poller.py --health ;;
-            *)      python3 poller.py --digest ;;
+            seed)
+              python3 poller.py --seed
+              ;;
+            verify)
+              # Exits nonzero whenever any entry needs fixing. That is the
+              # command's contract, so the run goes red by design — say so,
+              # otherwise a red X reads as "the workflow is broken".
+              python3 poller.py --verify || {
+                echo "::warning title=Config needs fixing::verify exits nonzero when any entry fails to resolve. The plumbing is fine — read the FAIL/WARN list above and repair those tokens."
+                exit 1
+              }
+              ;;
+            health)
+              python3 poller.py --health || {
+                echo "::warning title=Too many companies erroring::health exits nonzero above a 30% error rate. That is the alarm firing, not a workflow bug."
+                exit 1
+              }
+              ;;
+            *)
+              python3 poller.py --digest
+              ;;
           esac
 
       - name: Commit state
