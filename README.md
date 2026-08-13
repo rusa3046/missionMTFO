@@ -408,17 +408,36 @@ Adding a whole new ATS is one function plus one line in `ADAPTERS`.
 
 ## Known gaps
 
-**22 of the 44 enabled companies have never resolved.** `seen.db` was seeded on
-2026-08-08 and contains 4,615 postings across only 22 companies. The rest were guesses that
-didn't resolve — every entry is marked `"verified": false` for exactly this reason. Run
-**verify**, then `discover.py --fix-config`, then **seed** before trusting a quiet morning.
+**30 of the 40 enabled companies resolve.** Eight were repaired on 2026-08-12, and seven of
+those eight were on a *different ATS* than the config assumed rather than having a wrong
+token — Zillow was on Workday not Greenhouse, Perplexity/Notion/Snowflake on Ashby not
+Greenhouse, Capital One on `wd12` not `wd1`, Expedia on `wd108` not `wd5`. Slug guessing
+cannot find those. **inspect** can.
 
-Five companies are `disabled: true` because they expose no supported endpoint:
+Nine companies are `disabled: true` because they expose no public JSON board:
 
-- **Google, Meta, Netflix, Walmart** — custom career sites or Eightfold
-- **JPMorgan Chase** — Oracle Recruiting Cloud, not Workday
+| Company | Why |
+|---|---|
+| Google, Meta, Walmart | custom career sites |
+| Netflix, **Starbucks** | Eightfold |
+| **John Deere** | Radancy / TalentBrew |
+| JPMorgan Chase, *(Honeywell pending)* | Oracle Recruiting Cloud — no adapter yet |
+| **Discover** | tenant exists but returns HTTP 401 on every site segment; the board requires auth |
+| **Remitly** | board rendered in JavaScript, no fingerprint in the served HTML |
 
-Track those through HiringCafe, which aggregates career pages directly.
+The bolded five were established by evidence from **inspect**, not assumption. Each entry
+records the reason in its `notes`, and re-enabling is just deleting the `disabled` flag.
+
+Remitly is the one worth reviving: open a single posting on `careers.remitly.com` and run
+**inspect** on that URL — it will almost certainly land on the real ATS host.
+
+Track the rest through HiringCafe, which aggregates career pages directly.
+
+**Ten still fail and are fixable**: American Express, UnitedHealth/Optum, GE Aerospace and
+Global Payments (Workday — most likely the wrong instance, exactly as Capital One was);
+Rippling, Klarna, Personio (404); Revolut and Zalando (SmartRecruiters returning 0, likely
+a capitalisation difference); Honeywell (needs the Oracle adapter). One careers URL each
+through **inspect** resolves most of them.
 
 ---
 
