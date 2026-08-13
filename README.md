@@ -213,16 +213,30 @@ The workflow schedules **both**, then guards:
 - cron: '0 15 * * *'   # 07:00 PST
 ```
 
-A guard step computes the real local time with `zoneinfo("America/Los_Angeles")` and exits
-early unless the hour is 7. Manual `workflow_dispatch` runs skip the guard entirely.
+A guard step decides which one actually does the work. The rule is **once per Pacific day,
+at the first opportunity from 07:00 onwards** — not "exactly at 07:00". Whichever cron gets
+through first runs the digest; the other reads `runs.log`, sees today's line, and stands
+down. Manual `workflow_dispatch` runs skip the guard entirely.
+
+That wording is deliberate, and was paid for. The first version checked `hour == 7`, which
+looked right and failed on the very first scheduled day: **GitHub never fired the 14:00 UTC
+entry at all**, and the 15:00 one arrived at 08:02 Pacific. Hour 8, not 7 — so the guard
+skipped it, the other cron had never run, and no digest went out. GitHub's scheduler is
+explicitly best-effort: it delays runs, and under load it drops them. A guard that demands
+an exact clock hour converts ordinary drift into a silent total miss.
+
+The current rule degrades instead: if the on-time cron is dropped, the later one delivers an
+hour late. A late digest beats a missing one, and `runs.log` makes the duplicate impossible.
 
 **The tradeoff:** one extra no-op run per day — roughly fifteen seconds of Actions time,
 and it shows up in the run history as a skipped run. In exchange the digest lands at 7am
 year-round. The simpler alternative, a single `0 14 * * *`, costs no extra run but delivers
 at 6am Pacific from November to March.
 
-Worth knowing: GitHub's scheduler is best-effort and can fire 5–20 minutes late under load.
-The guard checks the hour, not the minute, so a late start still passes.
+**If a morning is ever missed entirely**, both crons were dropped. `runs.log` is how you
+find out — no line for that date. Trigger a catch-up by hand from
+**Actions → daily digest → Run workflow → digest**; it is idempotent, so nothing already
+sent gets sent twice.
 
 ---
 

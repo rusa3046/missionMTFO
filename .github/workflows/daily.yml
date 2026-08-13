@@ -53,23 +53,61 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Is it 07:00 in Los Angeles?
+      - name: Has today's digest already run?
         id: guard
         env:
           EVENT: ${{ github.event_name }}
         run: |
           python3 - <<'PY'
           import os
-          from datetime import datetime
+          from datetime import datetime, timezone
           from zoneinfo import ZoneInfo
 
-          now = datetime.now(ZoneInfo("America/Los_Angeles"))
+          LA = ZoneInfo("America/Los_Angeles")
+          now = datetime.now(LA)
           event = os.environ["EVENT"]
-          # Manual runs always proceed; only the cron pair needs filtering.
-          run = event != "schedule" or now.hour == 7
-          print("Pacific local time: %s  (event=%s)" % (now.strftime("%Y-%m-%d %H:%M %Z"), event))
-          if not run:
-              print("Not 07:00 Pacific — this is the other DST cron entry. Skipping.")
+
+          def last_digest_date():
+              """Pacific date of the most recent digest in runs.log, or None."""
+              try:
+                  lines = open("runs.log").read().splitlines()
+              except OSError:
+                  return None
+              for line in reversed(lines):
+                  if "mode=digest" not in line:
+                      continue
+                  try:
+                      when = datetime.strptime(line.split()[0], "%Y-%m-%dT%H:%M:%SZ")
+                  except (ValueError, IndexError):
+                      return None
+                  return when.replace(tzinfo=timezone.utc).astimezone(LA).date()
+              return None
+
+          # Both cron entries fire year-round; exactly one of them lands at 07:00
+          # Pacific depending on DST. But GitHub's scheduler is best-effort — it
+          # delays runs and sometimes drops them entirely. On 2026-08-12 the
+          # 14:00 UTC entry never fired and the 15:00 one arrived at 08:02
+          # Pacific, so an hour-equals-7 guard skipped both and no digest went
+          # out at all.
+          #
+          # So the rule is "once per Pacific day, at the first opportunity from
+          # 07:00 onwards" rather than "exactly at 07:00". Whichever cron gets
+          # through first does the work; the other sees today's line in runs.log
+          # and stands down. A late digest beats a missing one.
+          already = last_digest_date()
+          done_today = already == now.date()
+          run = event != "schedule" or (now.hour >= 7 and not done_today)
+
+          print("Pacific local time : %s" % now.strftime("%Y-%m-%d %H:%M %Z"))
+          print("event              : %s" % event)
+          print("last digest (PT)   : %s" % (already or "never"))
+          if run:
+              print("-> running")
+          elif done_today:
+              print("-> today's digest already ran; standing down")
+          else:
+              print("-> before 07:00 Pacific; this is the off-season cron entry")
+
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write("run=%s\n" % ("true" if run else "false"))
           PY
