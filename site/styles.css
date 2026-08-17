@@ -1,0 +1,475 @@
+/* ---------------------------------------------------------------------------
+   Resume site — single stylesheet, no build step, no dependencies.
+   Colors are defined once as tokens on :root and swapped for dark mode.
+   ------------------------------------------------------------------------- */
+
+:root {
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --border: #e6e2dc;
+  --border-strong: #d3cec6;
+  --text: #1a1917;
+  --text-muted: #6b6660;
+  --text-faint: #928c84;
+  --accent: #3f5f8f;
+  --accent-soft: #eef2f8;
+  --chip-bg: #f3f1ed;
+
+  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --measure: 46rem;
+  --radius: 10px;
+}
+
+:root[data-theme="dark"] {
+  --bg: #131415;
+  --surface: #191a1c;
+  --border: #2a2c2f;
+  --border-strong: #3a3d41;
+  --text: #eceae7;
+  --text-muted: #a3a09b;
+  --text-faint: #7c7975;
+  --accent: #8fb3e6;
+  --accent-soft: #1d2431;
+  --chip-bg: #212326;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131415;
+    --surface: #191a1c;
+    --border: #2a2c2f;
+    --border-strong: #3a3d41;
+    --text: #eceae7;
+    --text-muted: #a3a09b;
+    --text-faint: #7c7975;
+    --accent: #8fb3e6;
+    --accent-soft: #1d2431;
+    --chip-bg: #212326;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16.5px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.wrap {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* --- Theme toggle --------------------------------------------------------- */
+
+.theme-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* --- Header --------------------------------------------------------------- */
+
+.masthead {
+  padding: clamp(3.5rem, 9vw, 6rem) 0 2.25rem;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: clamp(2.1rem, 6.5vw, 3.1rem);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  font-weight: 640;
+}
+
+.tagline {
+  margin: 0.7rem 0 0;
+  font-size: clamp(1rem, 2.4vw, 1.15rem);
+  color: var(--text-muted);
+  max-width: 34rem;
+}
+
+.meta {
+  margin-top: 1.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.meta .location {
+  color: var(--text-faint);
+  padding-right: 0.35rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.34rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.btn--primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* --- Sections ------------------------------------------------------------- */
+
+section {
+  padding: 2.25rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.section-title {
+  margin: 0 0 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.summary {
+  margin: 0;
+  font-size: 1.08rem;
+  max-width: 38rem;
+}
+
+/* --- Entries (experience, education) -------------------------------------- */
+
+.entry + .entry {
+  margin-top: 2rem;
+}
+
+.entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+}
+
+.entry-title {
+  margin: 0;
+  font-size: 1.06rem;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.entry-org {
+  color: var(--accent);
+}
+
+.entry-dates {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Narrow screens: a wrapped title leaves the dates stranded on the right, so
+   drop them onto their own left-aligned line instead. */
+@media (max-width: 33.99rem) {
+  .entry-dates {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+.entry-sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.entry ul,
+.card ul {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.entry li,
+.card li {
+  margin-bottom: 0.32rem;
+}
+
+.entry li::marker,
+.card li::marker {
+  color: var(--text-faint);
+  font-size: 0.85em;
+}
+
+/* --- Chips ---------------------------------------------------------------- */
+
+.chips {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+  padding: 0;
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  background: var(--chip-bg);
+  border-radius: 5px;
+  padding: 0.16rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* --- Projects ------------------------------------------------------------- */
+
+.projects {
+  display: grid;
+  gap: 1rem;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1.15rem 1.25rem;
+}
+
+.card .entry-title {
+  font-size: 1rem;
+}
+
+.card-blurb {
+  margin: 0.3rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.93rem;
+}
+
+.card-links {
+  margin-left: auto;
+  display: flex;
+  gap: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+/* --- Skills --------------------------------------------------------------- */
+
+.skills {
+  display: grid;
+  gap: 1.1rem;
+}
+
+@media (min-width: 34rem) {
+  .skills {
+    grid-template-columns: 9rem 1fr;
+    gap: 0.9rem 1.5rem;
+    align-items: baseline;
+  }
+}
+
+.skill-group {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  margin: 0;
+}
+
+.skills .chips {
+  margin-top: 0.3rem;
+}
+
+@media (min-width: 34rem) {
+  .skills .chips {
+    margin-top: 0;
+  }
+}
+
+/* --- Footer --------------------------------------------------------------- */
+
+footer {
+  padding: 2.5rem 0 4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.83rem;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+/* --- Print: renders to a clean PDF via Cmd/Ctrl-P ------------------------- */
+
+@media print {
+  :root {
+    --bg: #fff;
+    --surface: #fff;
+    --border: #ccc;
+    --border-strong: #999;
+    --text: #000;
+    --text-muted: #333;
+    --text-faint: #555;
+    --accent: #000;
+    --accent-soft: #fff;
+    --chip-bg: #fff;
+  }
+
+  body {
+    font-size: 10.5pt;
+    line-height: 1.4;
+  }
+
+  .wrap {
+    max-width: none;
+    padding: 0;
+  }
+
+  .theme-toggle,
+  .meta .btn[data-print-hide],
+  .card-links {
+    display: none;
+  }
+
+  .masthead {
+    padding: 0 0 0.6rem;
+  }
+
+  /* The display-size heading is a screen effect; on paper it just eats a page. */
+  .masthead h1 {
+    font-size: 20pt;
+  }
+
+  .tagline {
+    font-size: 10.5pt;
+    margin-top: 0.25rem;
+  }
+
+  .meta {
+    margin-top: 0.55rem;
+    font-size: 8.5pt;
+  }
+
+  .btn {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin-right: 0.6rem;
+  }
+
+  .summary {
+    font-size: 10.5pt;
+  }
+
+  .section-title {
+    font-size: 8pt;
+    margin-bottom: 0.6rem;
+  }
+
+  .entry-title {
+    font-size: 11pt;
+  }
+
+  .entry + .entry {
+    margin-top: 0.8rem;
+  }
+
+  section {
+    padding: 0.75rem 0;
+    break-inside: avoid;
+  }
+
+  .entry,
+  .card {
+    break-inside: avoid;
+  }
+
+  .card {
+    border: none;
+    padding: 0;
+  }
+
+  .card + .card {
+    margin-top: 0.9rem;
+  }
+
+  .chip {
+    border: 1px solid #ddd;
+  }
+
+  a {
+    text-decoration: none;
+  }
+
+  footer {
+    display: none;
+  }
+
+  @page {
+    margin: 0.6in;
+  }
+}

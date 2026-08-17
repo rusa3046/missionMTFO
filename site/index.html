@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Résumé</title>
+    <meta name="description" content="Personal résumé site." />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>"
+    />
+    <script>
+      // Applied before first paint so a dark-theme visitor never sees a white flash.
+      try {
+        var saved = localStorage.getItem("theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (err) {}
+    </script>
+  </head>
+  <body>
+    <button class="theme-toggle" type="button" aria-label="Switch theme">☾</button>
+
+    <div id="app" class="wrap"></div>
+
+    <script src="resume-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
