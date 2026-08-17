@@ -4,3 +4,4 @@
 2026-08-14T14:57:49Z  mode=digest companies=40  ok=32  errors=8   new=177  matched=4   email=digest delivered=yes dur=73s
 2026-08-15T14:28:53Z  mode=digest companies=40  ok=32  errors=8   new=139  matched=5   email=digest delivered=yes dur=71s
 2026-08-16T14:29:41Z  mode=digest companies=40  ok=32  errors=8   new=12   matched=2   email=digest delivered=yes dur=72s
+2026-08-17T14:34:25Z  mode=digest companies=40  ok=32  errors=8   new=80   matched=0   email=errors delivered=yes dur=74s
