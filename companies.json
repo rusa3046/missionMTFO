@@ -7,7 +7,9 @@
       "\\bengineer\\b.{0,30}\\b(backend|platform|infrastructure|payments|api)\\b",
       "\\b(swe|sde)\\b",
       "developer productivity",
-      "developer experience"
+      "developer experience",
+      "\\bforward.deployed\\b",
+      "\\bfde\\b"
     ],
     "title_exclude": [
       "\\b(intern|internship|apprentice|co-?op)\\b",
@@ -16,7 +18,7 @@
       "\\b(engineer|engineering|swe|sde|developer|programmer)\\s*[-,]?\\s*(level\\s*)?(2|3|4|5|6|ii|iii|iv|v|vi)\\b",
       "\\b[lt][3-9]\\b",
       "\\b(experienced|expert|advanced|veteran)\\b",
-      "\\b(sales|solutions?|support|customer|field|forward.deployed)\\s+engineer\\b",
+      "\\b(sales|solutions?|support|customer|field)\\s+engineer\\b",
       "\\b(qa|test|quality)\\s+engineer\\b",
       "\\b(hardware|mechanical|electrical|civil|chemical|optical)\\b",
       "\\b(recruiter|designer|analyst|scientist)\\b"
