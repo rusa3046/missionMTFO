@@ -1053,7 +1053,8 @@ def _selftest_filters(check):
     print("filters")
     cfg = {"filters": {
         "title_include": [r"\b(software|backend|platform|infrastructure|ai|ml)\b.*engineer",
-                          r"engineer.*\b(backend|platform|infrastructure)\b"],
+                          r"engineer.*\b(backend|platform|infrastructure)\b",
+                          r"\bforward.deployed\b", r"\bfde\b"],
         "title_exclude": [r"\b(intern|principal|staff|director|manager|vp)\b",
                           r"\b(senior|snr|sr|lead|distinguished|fellow|architect)\b",
                           r"\b(engineer|engineering|swe|sde|developer|programmer)"
@@ -1105,6 +1106,22 @@ def _selftest_filters(check):
          "new grad survives"),
         (Job("Acme", "greenhouse", "17", "Software Engineer", "Seattle", "u"), True,
          "unlevelled title survives — the title cannot reveal its YOE bar"),
+
+        # Forward-deployed roles are wanted. They match none of the other
+        # include patterns, so they need one of their own — removing the old
+        # exclusion alone would still have dropped them.
+        (Job("Acme", "greenhouse", "18", "Forward Deployed Engineer", "Seattle", "u"), True,
+         "forward deployed engineer included"),
+        (Job("Acme", "greenhouse", "19", "Forward-Deployed Software Engineer", "Remote", "u"), True,
+         "hyphenated spelling included"),
+        (Job("Acme", "greenhouse", "20", "FDE, Enterprise", "New York", "u"), True,
+         "the FDE abbreviation included"),
+        (Job("Acme", "greenhouse", "21", "Senior Forward Deployed Engineer", "Seattle", "u"), False,
+         "seniority still wins over a wanted discipline"),
+        (Job("Acme", "greenhouse", "22", "Solutions Engineer", "Remote", "u"), False,
+         "sibling exclusions survive the edit — solutions still out"),
+        (Job("Acme", "greenhouse", "23", "Field Engineer", "Seattle", "u"), False,
+         "field engineer still out"),
     ]
 
     for job, expected, desc in cases:
