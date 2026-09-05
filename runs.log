@@ -23,3 +23,4 @@
 2026-09-02T17:48:51Z  mode=digest companies=40  ok=31  errors=9   new=244  matched=1   email=digest delivered=yes dur=74s
 2026-09-03T17:45:00Z  mode=digest companies=40  ok=31  errors=9   new=191  matched=0   email=errors delivered=yes dur=80s
 2026-09-04T17:31:23Z  mode=digest companies=40  ok=31  errors=9   new=165  matched=9   email=digest delivered=yes dur=74s
+2026-09-05T16:42:27Z  mode=digest companies=40  ok=31  errors=9   new=73   matched=2   email=digest delivered=yes dur=66s
